@@ -1,0 +1,9 @@
+# Configuration of the demo ("make demo"). The demo copies this file to a
+# temporary directory and adds a pins_dir there: your own pin files are never
+# touched.
+version: 1
+
+servers:
+  billing:
+    tools:
+      deny: ["delete_*"]

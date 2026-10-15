@@ -1,0 +1,70 @@
+# Vigie configuration: annotated example.
+#
+# Default location: ~/.config/vigie/vigie.yaml on Linux,
+# ~/Library/Application Support/vigie/vigie.yaml on macOS,
+# %AppData%\vigie\vigie.yaml on Windows. Override with --config or VIGIE_CONFIG.
+# Check a file with: vigie check --config vigie.yaml
+
+# Format version, required.
+version: 1
+
+# Where pin files live (one per server). Relative paths are resolved from this
+# file, so a project can version its approvals next to its code.
+# Default: the "pins" directory next to the default configuration file.
+# pins_dir: ./pins
+
+telemetry:
+  # Attach tool arguments and results to spans (gen_ai.tool.call.arguments and
+  # gen_ai.tool.call.result), credentials masked. Off by default: content often
+  # holds personal data.
+  capture_content: false
+  # Write Vigie's trace context into params._meta of relayed requests, so that
+  # an instrumented server joins the agent's trace.
+  propagate_context: true
+
+# Rules for every server. A server section below overrides them field by field.
+defaults:
+  # enforce: blocked calls never reach the server.
+  # audit: everything goes through, and what would have been blocked is recorded.
+  mode: enforce
+
+  tools:
+    # Name patterns: * stands for any sequence of characters, ? for one.
+    allow: ["*"]
+    deny: []
+
+  pins:
+    enabled: true
+    # A tool seen for the first time:
+    #   first-session  approve the tools of the first session with the server
+    #                  (its pin file is empty), hold the ones that appear later
+    #   pin            approve any new tool right away (trust on first use)
+    #   block          hide every new tool until "vigie pins approve"
+    on_new: first-session
+    # A tool whose definition changed since it was approved:
+    #   block  hide it and refuse calls until the change is approved
+    #   warn   let it through and record the change
+    on_change: block
+
+  secrets:
+    # Credentials in tool arguments (keys, tokens, private keys...): block, warn or off.
+    arguments: block
+    # Credentials in tool results, on their way to the model: warn or off.
+    results: warn
+
+servers:
+  # The name given to "vigie run --server".
+  filesystem:
+    tools:
+      deny: ["write_*", "move_*", "create_directory"]
+
+  github:
+    pins:
+      # A third-party server: every tool needs an explicit approval.
+      on_new: block
+    tools:
+      deny: ["delete_*", "merge_pull_request"]
+
+  # A server being evaluated: observe before enforcing.
+  sandbox:
+    mode: audit
