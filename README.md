@@ -7,14 +7,15 @@
 
 <p align="center">
   <b>Un serveur MCP peut réécrire la description de ses outils après votre feu vert, recevoir une clé d’API glissée dans un argument ou exposer un outil que personne n’a validé.<br>
-  Vigie se place entre l’agent et ses serveurs, trace chaque appel en OpenTelemetry et arrête ce qui n’a rien à faire là.</b>
+  Vigie se place entre l’agent et ses serveurs, en local comme en passerelle HTTP, trace chaque appel en OpenTelemetry et arrête ce qui n’a rien à faire là.</b>
 </p>
 
 <p align="center">
-  <a href="https://github.com/OlivMartins/vigie/releases/latest"><img src="https://img.shields.io/badge/version-0.1.0-F2C230?style=flat-square&labelColor=1B2A33" alt="Version 0.1.0"></a>
+  <a href="https://github.com/OlivMartins/vigie/releases/latest"><img src="https://img.shields.io/badge/version-0.2.0-F2C230?style=flat-square&labelColor=1B2A33" alt="Version 0.2.0"></a>
   <a href="https://github.com/OlivMartins/vigie/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/OlivMartins/vigie/ci.yml?branch=main&style=flat-square&label=tests&labelColor=1B2A33" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache%202.0-1E7A68?style=flat-square&labelColor=1B2A33" alt="Licence Apache 2.0"></a>
   <img src="https://img.shields.io/badge/MCP-2025--11--25%20%C2%B7%202026--07--28-53636B?style=flat-square&labelColor=1B2A33" alt="MCP 2025-11-25 et 2026-07-28">
+  <img src="https://img.shields.io/badge/transports-stdio%20%C2%B7%20HTTP-53636B?style=flat-square&labelColor=1B2A33" alt="Transports stdio et HTTP">
   <img src="https://img.shields.io/badge/OpenTelemetry-conventions%20MCP-53636B?style=flat-square&labelColor=1B2A33" alt="OpenTelemetry, conventions MCP">
   <img src="https://img.shields.io/badge/Go-1.26%2B-53636B?style=flat-square&labelColor=1B2A33" alt="Go 1.26 ou plus récent">
 </p>
@@ -23,6 +24,8 @@
   <a href="#démarrer"><b>Démarrer</b></a>
   &nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#brancher-votre-client-mcp"><b>Brancher votre client</b></a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="#la-passerelle-http"><b>Passerelle HTTP</b></a>
   &nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="#sous-le-capot"><b>Sous le capot</b></a>
   &nbsp;&nbsp;|&nbsp;&nbsp;
@@ -36,9 +39,9 @@
 ## En 30 secondes
 
 - **Le problème.** Un agent IA agit par ses outils, et ses outils viennent de serveurs MCP tiers, installés en une ligne, exécutés avec vos droits. Leur description guide le modèle : la changer après coup suffit à le détourner. Et personne ne voit ce qui part réellement dans les arguments.
-- **La réponse.** Un proxy, un binaire, placé devant la commande du serveur. Il trace selon les conventions MCP d’OpenTelemetry, épingle chaque définition d’outil et applique une politique écrite en YAML.
+- **La réponse.** Un proxy, un binaire, deux façons de le placer : devant la commande d’un serveur local (`vigie run`), ou en passerelle HTTP devant des serveurs distants, partagée par une équipe (`vigie gateway`). Il trace selon les conventions MCP d’OpenTelemetry, épingle chaque définition d’outil et applique une politique écrite en YAML.
 - **Ce qu’on obtient.** Les appels d’outils dans la même trace que l’agent, les définitions modifiées masquées jusqu’à votre revue, les clés et jetons arrêtés avant de quitter la machine, un mode audit pour mesurer avant d’imposer.
-- **Ce qu’il faut.** Rien d’autre que le binaire. Sans configuration, les valeurs par défaut protègent déjà. Pour voir les traces, n’importe quel backend OTLP, par exemple [Sonde](https://github.com/OlivMartins/sonde).
+- **Ce qu’il faut.** Rien d’autre que le binaire, ou son image conteneur signée. Sans configuration, les valeurs par défaut protègent déjà. Pour voir les traces, n’importe quel backend OTLP, par exemple [Sonde](https://github.com/OlivMartins/sonde).
 
 <p align="center">
   <picture>
@@ -55,7 +58,7 @@
 
 **Que font les outils de mon agent ?**
 
-Chaque requête MCP devient deux spans conformes aux conventions d’OpenTelemetry, rattachés à la trace de l’agent par `params._meta`. Durée par outil, erreurs, révision du protocole, et le temps que Vigie y ajoute (≈ 65 µs).
+Chaque requête MCP devient deux spans conformes aux conventions d’OpenTelemetry, rattachés à la trace de l’agent par `params._meta`. Durée par outil, erreurs, révision du protocole, et le temps que Vigie y ajoute (≈ 50 µs en stdio, ≈ 100 µs en passerelle).
 
 </td>
 <td width="33%" valign="top">
@@ -80,15 +83,15 @@ Onze formats de clés et jetons détectés : bloqués quand ils partent vers un 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.png">
-    <img src="docs/assets/architecture-light.png" width="100%" alt="Architecture de Vigie : l’agent envoie ses requêtes à Vigie en stdio. Vigie les lit strictement, applique la politique, puis les relaie au serveur MCP ou les refuse avec une raison renvoyée au modèle. Au retour, il retire de la liste les outils modifiés ou non approuvés et signale les secrets. Vigie lit sa configuration vigie.yaml, lit et écrit le fichier d’empreintes que le développeur approuve avec vigie pins, et exporte ses traces et métriques en OTLP vers un collector OpenTelemetry et un backend d’observabilité">
+    <img src="docs/assets/architecture-light.png" width="100%" alt="Architecture de Vigie : l’agent envoie ses requêtes à Vigie en stdio ou en HTTP. Vigie les lit strictement, applique la politique, puis les relaie au serveur MCP ou les refuse avec une raison renvoyée au modèle. Au retour, il retire de la liste les outils modifiés ou non approuvés et signale les secrets. Vigie lit sa configuration vigie.yaml, lit et écrit le fichier d’empreintes que le développeur approuve avec vigie pins, et exporte ses traces et métriques en OTLP vers un collector OpenTelemetry et un backend d’observabilité">
   </picture>
 </p>
 
-Vigie se lance à la place du serveur, dans la configuration du client. Chaque requête est lue, jugée par la politique, puis relayée au serveur ou refusée avec une raison que le modèle comprend. Au retour, les outils modifiés ou non approuvés sont retirés de la liste avant d’atteindre l’agent. Les empreintes tiennent dans un fichier par serveur, que vous approuvez avec `vigie pins`, et les traces partent en OTLP vers votre backend.
+En local, Vigie se lance à la place du serveur, dans la configuration du client ; en passerelle, le client pointe vers Vigie au lieu de l’URL du serveur. Chaque requête est lue, jugée par la politique, puis relayée au serveur ou refusée avec une raison que le modèle comprend. Au retour, les outils modifiés ou non approuvés sont retirés de la liste avant d’atteindre l’agent. Les empreintes tiennent dans un fichier par serveur, que vous approuvez avec `vigie pins`, et les traces partent en OTLP vers votre backend.
 
 ## Démarrer
 
-**La démo**, sans rien installer d’autre que Go : un serveur de facturation, utilisé puis mis à jour avec une description piégée.
+**La démo**, sans rien installer d’autre que Go : un serveur de facturation, utilisé puis mis à jour avec une description piégée. `make demo-gateway` joue la même scène en HTTP, à travers la passerelle, le serveur étant mis à jour pendant qu’elle tourne.
 
 ```bash
 git clone https://github.com/OlivMartins/vigie.git && cd vigie
@@ -101,15 +104,27 @@ make demo
 go install github.com/OlivMartins/vigie/cmd/vigie@latest
 ```
 
-ou un binaire pour Linux, macOS ou Windows (amd64, arm64) depuis les [releases](https://github.com/OlivMartins/vigie/releases/latest), avec ses sommes de contrôle.
+ou un binaire pour Linux, macOS ou Windows (amd64, arm64) depuis les [releases](https://github.com/OlivMartins/vigie/releases/latest), avec ses sommes de contrôle, ou l’image signée `ghcr.io/olivmartins/vigie` pour la passerelle.
 
-**L’usage** : préfixez la commande de votre serveur MCP.
+**En local** : préfixez la commande de votre serveur MCP.
 
 ```bash
 vigie run --server filesystem -- npx -y @modelcontextprotocol/server-filesystem ~/projets
 ```
 
 `--server` nomme le serveur : il choisit sa section dans la politique et son fichier d’empreintes. Tout ce qui suit `--` est la commande d’origine, inchangée.
+
+**Devant un serveur distant** : donnez son URL dans la configuration, et lancez la passerelle.
+
+```bash
+cat > vigie.yaml <<'YAML'
+version: 1
+servers:
+  billing:
+    url: https://billing.example.com/mcp
+YAML
+vigie gateway --config vigie.yaml    # sert http://127.0.0.1:8787/mcp/billing
+```
 
 ## Brancher votre client MCP
 
@@ -136,6 +151,37 @@ claude mcp add filesystem -- vigie run --server filesystem -- npx -y @modelconte
 ```
 
 Le client ne voit aucune différence : mêmes outils, mêmes réponses. Seuls changent les outils masqués, les appels refusés (avec leur raison) et le contexte de trace ajouté aux requêtes.
+
+## La passerelle HTTP
+
+`vigie gateway` met Vigie devant des serveurs MCP distants, en Streamable HTTP, et le partage au sein d’une équipe : chaque serveur de la configuration qui a une `url` est servi sous `/mcp/<nom>`, avec la même politique, les mêmes empreintes et les mêmes traces qu’en local.
+
+```yaml
+version: 1
+gateway:
+  listen: 0.0.0.0:8787
+  tokens:
+    equipe-data: ${VIGIE_TOKEN_DATA}      # un jeton par client, lu dans l’environnement
+servers:
+  billing:
+    url: https://billing.internal.example/mcp
+    headers:
+      Authorization: Bearer ${BILLING_SERVICE_TOKEN}   # l’identifiant de la passerelle auprès du serveur
+```
+
+Côté client, l’URL du serveur devient celle de Vigie :
+
+```bash
+claude mcp add --transport http billing http://vigie.internal:8787/mcp/billing \
+  --header "Authorization: Bearer <votre jeton>"
+```
+
+Ce que la passerelle ajoute au relais :
+
+- **Les deux époques du transport.** Sessions, flux GET et reprise des révisions 2025-03-26 à 2025-11-25 ; requêtes sans état, en-têtes `Mcp-Method` et `Mcp-Name` et flux `subscriptions/listen` de 2026-07-28. Chaque message d’une réponse en flux (SSE) est contrôlé au passage, les identifiants d’événement conservés.
+- **En-têtes et corps concordent.** Un en-tête `Mcp-Method`, `Mcp-Name` ou `Mcp-Protocol-Version` qui contredit le corps est refusé (`-32020`) : ce qui est placé derrière Vigie peut router sur les en-têtes sans être trompé.
+- **Fermée par défaut.** Écoute sur la boucle locale, pages web d’autres sites refusées (*DNS rebinding*) ; au-delà de la machine, la passerelle refuse de démarrer sans jetons, à moins qu’un proxy en amont n’authentifie les clients.
+- **Sans état.** Chaque échange HTTP se suffit à lui-même : plusieurs instances derrière un répartiteur de charge, sans affinité de session. Image conteneur signée, sondes `/healthz` et `/readyz`, arrêt propre : [docs/deploiement.md](docs/deploiement.md).
 
 ## La politique
 
@@ -170,6 +216,8 @@ L’empreinte lie l’approbation à ce que vous avez relu : si le serveur envoi
 
 Le fichier d’empreintes de chaque serveur est un JSON lisible : versionnez-le avec votre projet et relisez ses changements en revue de code, comme un fichier de verrouillage de dépendances.
 
+Pour garder une trace des décisions sans backend d’observabilité, `audit.file` les écrit dans un journal local, une ligne JSON par décision, avec la règle, l’emplacement, le client et l’identifiant de trace, jamais la valeur détectée.
+
 ## La télémétrie
 
 Indiquez un point de collecte OTLP, Vigie s’occupe du reste :
@@ -178,7 +226,7 @@ Indiquez un point de collecte OTLP, Vigie s’occupe du reste :
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
-Sans point de collecte, la télémétrie reste éteinte ; `--trace-file spans.jsonl` écrit les spans dans un fichier. Les attributs suivent les [conventions MCP d’OpenTelemetry](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md) (`mcp.method.name`, `gen_ai.tool.name`, `jsonrpc.request.id`, `mcp.protocol.version`...) ; les décisions s’ajoutent sous `vigie.*`. La liste complète est dans [l’architecture](docs/ARCHITECTURE.md#télémétrie).
+Sans point de collecte, la télémétrie reste éteinte ; `--trace-file spans.jsonl` écrit les spans dans un fichier. Les attributs suivent les [conventions MCP d’OpenTelemetry](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md) (`mcp.method.name`, `gen_ai.tool.name`, `jsonrpc.request.id`, `mcp.protocol.version`, et en HTTP `network.protocol.name`, `server.address`, `mcp.session.id`, haché) ; les décisions s’ajoutent sous `vigie.*`. Le contexte de trace circule par `params._meta`, et en HTTP aussi par l’en-tête `traceparent`. La liste complète est dans [l’architecture](docs/ARCHITECTURE.md#télémétrie).
 
 **Avec Sonde**, les décisions de Vigie se lisent en SQL à côté des coûts et de la qualité des agents : décisions par règle, définitions modifiées, secrets par type et par outil, latence par outil et surcoût de Vigie. Branchement et requêtes : [docs/sonde.md](docs/sonde.md).
 
@@ -187,12 +235,13 @@ Sans point de collecte, la télémétrie reste éteinte ; `--trace-file spans.js
 Quelques choix qui font la différence entre une démo et un outil sur lequel compter :
 
 - **Transparent à l’octet près.** Vigie travaille au niveau JSON-RPC, sans SDK MCP : ce qu’il ne modifie pas sort tel quel, membres inconnus compris. Il relaie la poignée de main `initialize` des révisions 2024-11-05 à 2025-11-25 comme la révision sans état 2026-07-28 (`_meta` par requête, `resultType`, `ttlMs`).
-- **Testé avec les SDK officiels, et contre eux.** La CI fait passer les SDK MCP en TypeScript, v1 et v2, client et serveur, à travers Vigie, dans les deux ères du protocole. Puis un serveur malveillant tente de leur faire parvenir un outil interdit ou modifié par six chemins détournés.
+- **Testé avec les SDK officiels, et contre eux.** La CI fait passer les SDK MCP en TypeScript, v1 et v2, client et serveur, à travers Vigie, en stdio et en HTTP, dans les deux ères du protocole. Puis un serveur malveillant tente de leur faire parvenir un outil interdit ou modifié : six chemins détournés en stdio, dix en HTTP, dont une réponse glissée sur le flux GET. Sans le mode enforce, sept des dix attaques HTTP trompent les SDK.
+- **Conforme, à travers Vigie.** La suite de conformance officielle de MCP passe contre son serveur de référence directement, puis à travers la passerelle, pour les révisions 2025-11-25 et 2026-07-28 : chaque scénario réussi en direct réussit à travers Vigie. Le seul écart est en faveur de Vigie, qui vérifie les en-têtes HTTP là où le serveur de référence ne le fait pas.
 - **Rien d’ambigu ne passe.** Un message qu’un pair pourrait lire autrement que Vigie (membre en double, `"Name"` à côté de `"name"`), une réponse qui ne correspond exactement à aucune requête en attente, une ligne illisible : en mode enforce, rien de cela n’est relayé, dans un sens comme dans l’autre. Une divergence d’analyse suffirait sinon à montrer une chose à Vigie et une autre au client ou au serveur.
 - **Deux spans par requête.** Un span SERVER pour la réception, un span CLIENT pour le relais : la trace se lit d’un bloc jusqu’au serveur instrumenté, et leur différence mesure ce que coûte Vigie.
 - **Des refus qui s’expliquent.** Un appel bloqué revient au modèle comme un résultat d’outil en erreur, avec la règle et l’emplacement : l’agent comprend, prévient l’utilisateur et ne réessaie pas en boucle.
 - **Aucun secret dans la télémétrie.** Une décision dit `arguments.body` et `aws_access_key_id`, jamais la valeur. Les tests le vérifient sur les spans produits, contenu capturé, noms de membres, URI de ressources et messages d’erreur compris.
-- **Un arrêt propre.** Sous Linux et macOS, le serveur tourne dans son propre groupe de processus et s’arrête selon la séquence du transport stdio (fermeture de l’entrée, SIGTERM, SIGKILL). S’il s’arrête de lui-même, son code de sortie remonte à l’hôte.
+- **Un arrêt propre.** Sous Linux et macOS, le serveur stdio tourne dans son propre groupe de processus et s’arrête selon la séquence du transport (fermeture de l’entrée, SIGTERM, SIGKILL). S’il s’arrête de lui-même, son code de sortie remonte à l’hôte. La passerelle, elle, se retire du répartiteur, ferme ses flux durables et laisse finir les requêtes en cours.
 
 Les détails, les choix écartés et les limites connues : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) et les [décisions d’architecture](docs/adr/).
 
@@ -202,10 +251,10 @@ Les détails, les choix écartés et les limites connues : [docs/ARCHITECTURE.md
 make test && make lint
 ```
 
-- Tests unitaires et de bout en bout, avec le détecteur de concurrence, sous Linux et macOS : relais, spans et attributs, empreintes à travers deux sessions, refus, annulations, lots, processus serveur réel.
-- Tests adverses : messages ambigus, identifiants de réponse détournés, définitions sans nom, secrets cachés dans des noms de membres, côté client comme côté serveur.
-- `make compat` fait dialoguer les SDK MCP officiels à travers Vigie, puis les confronte à un serveur malveillant ; `make sonde-check` rejoue les spans de la démo dans le schéma ClickHouse de Sonde et exécute chaque requête de la documentation.
-- `make fuzz` éprouve l’analyseur JSON-RPC et le détecteur de secrets, `make bench` mesure le temps de traitement d’un appel.
+- Tests unitaires et de bout en bout, avec le détecteur de concurrence, sous Linux et macOS : relais, passerelle, spans et attributs, empreintes à travers deux sessions, refus, annulations, lots, sessions et reprise de flux HTTP, processus serveur réel.
+- Tests adverses : messages ambigus, identifiants de réponse détournés, définitions sans nom, secrets cachés dans des noms de membres, en-têtes HTTP qui contredisent le corps, réponses glissées sur un flux, côté client comme côté serveur.
+- `make compat` fait dialoguer les SDK MCP officiels à travers Vigie, en stdio et en HTTP, puis les confronte à un serveur malveillant ; `make conformance` passe la suite de conformance officielle à travers la passerelle ; `make sonde-check` rejoue les spans des deux démos dans le schéma ClickHouse de Sonde et exécute chaque requête de la documentation.
+- `make fuzz` éprouve l’analyseur JSON-RPC, le lecteur SSE et le détecteur de secrets ; `make bench` mesure le temps de traitement d’un appel, `make loadtest` la passerelle sous charge ([résultats](docs/ARCHITECTURE.md#sous-charge)).
 
 ## D’où vient Vigie
 

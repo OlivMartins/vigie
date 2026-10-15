@@ -22,6 +22,41 @@ telemetry:
   # an instrumented server joins the agent's trace.
   propagate_context: true
 
+# Decision log: one JSON object per line for every tools/call and tools/list
+# (decision, rule, client, trace id), rotated by size. Off by default.
+# audit:
+#   file: ./audit/vigie.jsonl
+#   max_size: 100MiB
+#   max_files: 5
+
+# limits:
+#   # Largest message relayed in either direction (stdio and HTTP).
+#   max_message_size: 64MiB
+#   # Time given to a stopping server process (stdio), or to requests in flight
+#   # when the gateway shuts down.
+#   stop_timeout: 15s
+
+# HTTP gateway ("vigie gateway"): serves every server that has a url under
+# /mcp/<name>. Listens on the loopback interface by default; any other address
+# requires tokens or allow_anonymous.
+# gateway:
+#   listen: 127.0.0.1:8787
+#   # One token per client, at least 24 characters, sent as
+#   # "Authorization: Bearer <token>". The name appears in traces and the audit log.
+#   tokens:
+#     data-team: ${VIGIE_TOKEN_DATA}
+#   # Set only when a proxy in front of Vigie already authenticates clients.
+#   allow_anonymous: false
+#   # Web pages allowed to call the gateway (Origin header). Loopback origins
+#   # are allowed while the gateway listens on the loopback interface.
+#   allowed_origins: ["https://console.example.com"]
+#   # Accepted Host headers, when the listen address is not enough.
+#   allowed_hosts: ["vigie.internal.example.com"]
+#   tls:
+#     cert_file: /etc/vigie/tls.crt
+#     key_file: /etc/vigie/tls.key
+#   max_request_size: 4MiB
+
 # Rules for every server. A server section below overrides them field by field.
 defaults:
   # enforce: blocked calls never reach the server.
@@ -68,3 +103,11 @@ servers:
   # A server being evaluated: observe before enforcing.
   sandbox:
     mode: audit
+
+  # A remote server, served by "vigie gateway" under /mcp/billing.
+  billing:
+    url: https://billing.example.com/mcp
+    # Headers added to every request sent to the server, to authenticate the
+    # gateway. ${VAR} reads the environment; a missing variable is an error.
+    # headers:
+    #   Authorization: Bearer ${BILLING_SERVICE_TOKEN}
