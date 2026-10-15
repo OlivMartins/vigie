@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sort"
 
 	"go.opentelemetry.io/otel/propagation"
@@ -77,6 +78,21 @@ func Inject(ctx context.Context, params map[string]json.RawMessage) (map[string]
 	}
 	params["_meta"] = raw
 	return params, true, nil
+}
+
+// ExtractHTTP returns ctx with the remote span context carried by HTTP
+// headers (traceparent, tracestate, baggage), if any.
+func ExtractHTTP(ctx context.Context, h http.Header) context.Context {
+	return Propagator.Extract(ctx, propagation.HeaderCarrier(h))
+}
+
+// InjectHTTP writes the span context of ctx into HTTP headers, replacing any
+// context they carried.
+func InjectHTTP(ctx context.Context, h http.Header) {
+	for _, f := range Propagator.Fields() {
+		h.Del(f)
+	}
+	Propagator.Inject(ctx, propagation.HeaderCarrier(h))
 }
 
 func metaOf(params map[string]json.RawMessage) metaCarrier {
