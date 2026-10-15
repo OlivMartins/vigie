@@ -1,6 +1,7 @@
-# Construit les binaires des six plateformes et leurs sommes de contrôle, puis
-# les joint à la release. Se déclenche à la publication d'une release, ou à la
-# main (onglet Actions > Release > Run workflow) pour compléter une release existante.
+# Construit les binaires des six plateformes et leurs sommes de contrôle, les
+# joint à la release, puis publie l'image conteneur signée sur ghcr.io. Se
+# déclenche à la publication d'une release, ou à la main (onglet Actions >
+# Release > Run workflow) pour compléter une release existante.
 name: Release
 
 on:
@@ -36,3 +37,49 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" --clobber dist/vigie_* dist/SHA256SUMS
+
+  image:
+    name: Publier l'image conteneur signée
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # signature sans clé : l'identité du workflow signe
+    env:
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/vigie
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ env.TAG }}
+            COMMIT=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+      - uses: sigstore/cosign-installer@v4
+      - name: Signer l'image (cosign, sans clé)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE@$DIGEST"

@@ -23,6 +23,7 @@ const (
 	MethodResourcesRead        = "resources/read"
 	MethodResourcesSubscribe   = "resources/subscribe"
 	MethodResourcesUnsubscribe = "resources/unsubscribe"
+	MethodSubscriptionsListen  = "subscriptions/listen"
 	NotificationCancelled      = "notifications/cancelled"
 	NotificationToolsChanged   = "notifications/tools/list_changed"
 )

@@ -28,7 +28,7 @@ jobs:
       - name: Couverture
         run: go tool cover -func=cover.out | tail -1
       - name: Les benchmarks tournent
-        run: go test -run='^$' -bench=. -benchtime=100x ./internal/proxy
+        run: go test -run='^$' -bench=. -benchtime=100x ./internal/proxy ./internal/gateway
 
   lint:
     name: Analyse statique
@@ -51,6 +51,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test -run='^$' -fuzz=FuzzParseFrame -fuzztime=20s ./internal/jsonrpc
+      - run: go test -run='^$' -fuzz=FuzzReader -fuzztime=20s ./internal/sse
       - run: go test -run='^$' -fuzz=FuzzScanJSON -fuzztime=20s ./internal/secrets
 
   build:
@@ -63,6 +64,26 @@ jobs:
           go-version-file: go.mod
       - run: make dist
       - run: cat dist/SHA256SUMS
+
+  image:
+    name: Image conteneur
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - name: Construire l'image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: vigie:ci
+          build-args: VERSION=ci
+      - name: L'image démarre et refuse d'écouter sans authentification
+        run: |
+          docker run --rm vigie:ci version
+          mkdir -p /tmp/vigie && printf 'version: 1\nservers:\n  billing:\n    url: https://billing.example/mcp\n' > /tmp/vigie/vigie.yaml
+          if docker run --rm -v /tmp/vigie:/etc/vigie:ro vigie:ci 2> err.txt; then exit 1; fi
+          grep -q "add gateway.tokens" err.txt
 
   demo:
     name: Démo et SDK MCP officiels
@@ -79,8 +100,22 @@ jobs:
           cache-dependency-path: test/compat/package-lock.json
       - name: La démo se joue jusqu'au bout
         run: make demo
-      - name: Vigie entre les SDK TypeScript v1 et v2, dans les deux ères du protocole
+      - name: Vigie entre les SDK TypeScript v1 et v2, en stdio et en HTTP, dans les deux ères du protocole
         run: make compat
+
+  conformance:
+    name: Suite de conformance MCP à travers la passerelle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Chaque scénario réussi en direct réussit à travers Vigie (2025-11-25 et 2026-07-28)
+        run: make conformance
 
   sonde:
     name: Intégration Sonde dans ClickHouse

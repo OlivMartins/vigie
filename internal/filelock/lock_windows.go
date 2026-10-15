@@ -1,6 +1,6 @@
 //go:build windows
 
-package pins
+package filelock
 
 import (
 	"os"

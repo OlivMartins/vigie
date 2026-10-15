@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/OlivMartins/vigie/internal/filelock"
 )
 
 // FileVersion is the format version of pin files.
@@ -138,6 +140,10 @@ type Store struct {
 	stamp stamp
 	// firstSession is set by BeginSession when the pin file holds no tool.
 	firstSession bool
+	// shared is set by BeginShared: the store serves many sessions at once.
+	shared bool
+	// firstListingUntil closes the first session of a shared store.
+	firstListingUntil time.Time
 	// fingerprints caches fingerprints by the SHA-256 of the raw definition:
 	// servers send the same bytes on every tools/list.
 	fingerprints map[[sha256.Size]byte]string
@@ -206,11 +212,41 @@ func (s *Store) BeginSession() error {
 	return nil
 }
 
-// FirstSession reports what BeginSession recorded.
+// FirstListingWindow is how long the first session of a shared store lasts
+// after its first tool list was recorded: the pages of a paginated list
+// arrive one by one.
+const FirstListingWindow = time.Minute
+
+// BeginShared prepares the store for many sessions at once, as the HTTP
+// gateway serves them. There, the first session is the first tool list ever
+// recorded for the server: under first-session, new tools are approved on
+// sight while the pin file holds no tool, and for FirstListingWindow after
+// that first list was recorded. Tools that appear later wait for an approval.
+func (s *Store) BeginShared() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.load(); err != nil {
+		return err
+	}
+	s.shared = true
+	return nil
+}
+
+// FirstSession reports whether new tools are still approved under
+// first-session: what BeginSession recorded or, for a shared store, whether
+// its first listing is still open.
 func (s *Store) FirstSession() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.firstSession
+	if !s.shared {
+		return s.firstSession
+	}
+	f, err := s.load()
+	return err == nil && s.firstListingOpen(f)
+}
+
+func (s *Store) firstListingOpen(f *File) bool {
+	return len(f.Tools) == 0 || time.Now().Before(s.firstListingUntil)
 }
 
 // Approves reports whether a tool never seen before is approved on sight
@@ -221,6 +257,21 @@ func (s *Store) Approves(newTools NewTools) bool {
 		return true
 	case PinFirstSession:
 		return s.FirstSession()
+	default:
+		return false
+	}
+}
+
+// approvesLocked is Approves for a caller holding s.mu, with the file loaded.
+func (s *Store) approvesLocked(newTools NewTools, f *File) bool {
+	switch newTools {
+	case PinOnFirstUse:
+		return true
+	case PinFirstSession:
+		if s.shared {
+			return s.firstListingOpen(f)
+		}
+		return s.firstSession
 	default:
 		return false
 	}
@@ -238,7 +289,6 @@ func (s *Store) Status(tool string) (Status, error) {
 // Observe compares the definitions of a tools/list result with the pin file,
 // records what is new or changed, and returns the status of each tool.
 func (s *Store) Observe(tools []Observed, newTools NewTools) ([]Observation, error) {
-	approveNew := s.Approves(newTools)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockFile()
@@ -250,6 +300,8 @@ func (s *Store) Observe(tools []Observed, newTools NewTools) ([]Observation, err
 	if err != nil {
 		return nil, err
 	}
+	approveNew := s.approvesLocked(newTools, f)
+	opensFirstListing := s.shared && len(f.Tools) == 0
 	f = f.clone()
 	now := s.now()
 	dirty := false
@@ -294,6 +346,9 @@ func (s *Store) Observe(tools []Observed, newTools NewTools) ([]Observation, err
 	if dirty {
 		if err := s.save(f); err != nil {
 			return nil, err
+		}
+		if opensFirstListing && approveNew {
+			s.firstListingUntil = time.Now().Add(FirstListingWindow)
 		}
 	}
 	return out, nil
@@ -427,23 +482,7 @@ func (s *Store) load() (*File, error) {
 
 // lockFile takes an exclusive lock shared by every process using this pin
 // file, so that read-modify-write cycles do not overwrite each other.
-func (s *Store) lockFile() (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(s.path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := lockExclusive(f); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("locking %s: %w", f.Name(), err)
-	}
-	return func() {
-		_ = unlockFile(f)
-		f.Close()
-	}, nil
-}
+func (s *Store) lockFile() (func(), error) { return filelock.Lock(s.path) }
 
 // save writes f atomically: a reader sees the old file or the new one, never
 // a partial write.

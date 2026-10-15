@@ -1,6 +1,6 @@
 //go:build unix
 
-package pins
+package filelock
 
 import (
 	"os"

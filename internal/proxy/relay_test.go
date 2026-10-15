@@ -545,7 +545,7 @@ func TestCancellation(t *testing.T) {
 		t.Errorf("cancelled span: %v", cancelled.Attributes())
 	}
 	late := mustParse(t, `{"jsonrpc":"2.0","id":7,"result":{"tools":[{"name":"delete_all"}]}}`)
-	h.relay.fromServer(late)
+	h.relay.FromServer(late)
 	if strings.Contains(string(late.Result()), "delete_all") {
 		t.Errorf("late response not filtered: %s", late.Result())
 	}

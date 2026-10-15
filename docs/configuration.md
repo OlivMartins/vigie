@@ -1,6 +1,6 @@
 # Configuration
 
-Vigie fonctionne sans fichier : les valeurs par défaut épinglent les outils à leur première apparition, bloquent les définitions modifiées et les secrets dans les arguments. Le fichier sert à adapter ces règles, serveur par serveur.
+Vigie fonctionne sans fichier : les valeurs par défaut épinglent les outils de la première session, bloquent les définitions modifiées et les secrets dans les arguments. Le fichier sert à adapter ces règles, serveur par serveur, et à décrire les serveurs distants que sert la passerelle HTTP.
 
 Un exemple commenté de chaque champ : [`examples/vigie.yaml`](../examples/vigie.yaml).
 
@@ -20,9 +20,19 @@ Un exemple commenté de chaque champ : [`examples/vigie.yaml`](../examples/vigie
 | `version` | `1` | obligatoire | Version du format |
 | `pins_dir` | chemin | `pins/` à côté du fichier par défaut | Répertoire des fichiers d’empreintes. Relatif au fichier de configuration ; `~` accepté |
 | `telemetry.capture_content` | booléen | `false` | Joint arguments et résultats aux spans, secrets masqués, tronqués à 32 Kio |
-| `telemetry.propagate_context` | booléen | `true` | Écrit le contexte de trace de Vigie dans `params._meta` des requêtes relayées |
+| `telemetry.propagate_context` | booléen | `true` | Écrit le contexte de trace de Vigie dans `params._meta` des requêtes relayées (et, en HTTP, dans l’en-tête `traceparent`) |
+| `audit.file` | chemin | aucun | Journal d’audit : une ligne JSON par décision. Relatif au fichier de configuration |
+| `audit.max_size` | taille | `100MiB` | Taille à partir de laquelle le journal tourne |
+| `audit.max_files` | entier | `5` | Anciens journaux conservés (`.1` à `.5`) |
+| `limits.max_message_size` | taille | `64MiB` | Taille maximale d’un message JSON-RPC, dans les deux sens, stdio et HTTP (64KiB au moins) |
+| `limits.stop_timeout` | durée | `5s` en stdio, `15s` en passerelle | Temps laissé pour un arrêt propre : au serveur stdio pour sortir une fois son entrée fermée, aux requêtes en cours de la passerelle |
+| `gateway` | passerelle | voir ci-dessous | La passerelle HTTP (`vigie gateway`) |
 | `defaults` | politique | voir ci-dessous | Règles de tous les serveurs |
 | `servers.<nom>` | politique | – | Règles d’un serveur, champ par champ au-dessus de `defaults` |
+| `servers.<nom>.url` | URL `http://` ou `https://` | – | Point d’accès MCP d’un serveur distant : la passerelle le sert sous `/mcp/<nom>` |
+| `servers.<nom>.headers` | en-têtes | – | En-têtes ajoutés à chaque requête vers ce serveur, à la place de ceux du client : l’identifiant de la passerelle auprès du serveur, typiquement |
+
+Les tailles s’écrivent `512KiB`, `4MiB`, `1GiB` ou en octets ; les durées `500ms`, `15s`, `2m`.
 
 ### Politique
 
@@ -41,10 +51,29 @@ Les motifs comparent le nom exact d’un outil : `*` vaut n’importe quelle sui
 
 Une liste donnée dans une section de serveur remplace celle de `defaults` ; `deny: []` efface donc les interdictions par défaut pour ce serveur. Un serveur sans section suit `defaults`.
 
+### Passerelle
+
+| Champ | Valeurs | Défaut | Effet |
+| --- | --- | --- | --- |
+| `gateway.listen` | `hôte:port` | `127.0.0.1:8787` | Adresse d’écoute |
+| `gateway.tokens` | `nom: jeton` | aucun | Clients autorisés et leur jeton porteur (`Authorization: Bearer …`), 24 caractères au moins. Le nom va dans les spans (`vigie.client.name`) et le journal d’audit |
+| `gateway.allow_anonymous` | booléen | `false` | Autorise l’écoute au-delà de la boucle locale sans jeton, quand un proxy en amont authentifie les clients |
+| `gateway.allowed_origins` | origines | pages de la machine si l’écoute est locale, aucune sinon | Pages web autorisées à appeler la passerelle (`https://app.example.com`) ; une requête qui porte une autre origine est refusée |
+| `gateway.allowed_hosts` | noms d’hôte | noms de la boucle locale si l’écoute est locale, tous sinon | Valeurs acceptées dans l’en-tête `Host` |
+| `gateway.tls.cert_file`, `gateway.tls.key_file` | chemins | aucun | Sert en HTTPS (HTTP/2 compris) |
+| `gateway.max_request_size` | taille | `4MiB` | Corps maximal d’une requête d’un client |
+
+La passerelle refuse de démarrer sur une adresse joignable depuis le réseau sans `gateway.tokens` ni `gateway.allow_anonymous` ([ADR 0008](adr/0008-pas-d-ecoute-anonyme-hors-boucle-locale.md)). Avec des jetons, l’en-tête `Authorization` du client reste à la passerelle ; sans jetons, il est relayé tel quel au serveur.
+
+**Variables d’environnement.** Dans `gateway.tokens` et `servers.<nom>.headers`, `${NOM}` est remplacé par la variable d’environnement `NOM` : les secrets restent hors du fichier. Une variable absente ou vide arrête Vigie, plutôt qu’un identifiant vide. `vigie check` affiche les noms des en-têtes ajoutés, jamais leurs valeurs.
+
+Les en-têtes réservés au protocole ou à HTTP (`Host`, `Content-Type`, `Mcp-Session-Id`, `Mcp-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-*`, `traceparent`...) ne peuvent pas être fixés par `headers`.
+
 ## Ligne de commande
 
 ```text
 vigie run --server NOM [options] -- COMMANDE [ARGUMENTS...]
+vigie gateway [options]
 ```
 
 | Option | Effet |
@@ -58,6 +87,8 @@ vigie run --server NOM [options] -- COMMANDE [ARGUMENTS...]
 
 Tout ce qui suit `--` est la commande du serveur, lancée avec l’environnement de Vigie.
 
+`vigie gateway` prend `--config`, `--mode`, `--trace-file`, `--log-level` et `--log-format`, plus `--listen hôte:port`, qui remplace `gateway.listen`. Elle sert chaque serveur qui a une `url`, et s’arrête proprement sur SIGINT ou SIGTERM.
+
 | Commande | Effet |
 | --- | --- |
 | `vigie pins list [SERVEUR]` | Outils épinglés et leur statut |
@@ -68,7 +99,7 @@ Tout ce qui suit `--` est la commande du serveur, lancée avec l’environnement
 | `vigie check` | Valide la configuration et affiche la politique de chaque serveur |
 | `vigie version` | Version, révision, version de Go et plateforme |
 
-Codes de sortie de `vigie run` : celui du serveur s’il s’arrête de lui-même, 0 si le client ferme la session, 1 si le fichier d’empreintes est illisible, 2 pour une erreur d’usage ou de configuration, 127 si le serveur ne démarre pas.
+Codes de sortie de `vigie run` : celui du serveur s’il s’arrête de lui-même, 0 si le client ferme la session, 1 si le fichier d’empreintes est illisible, 2 pour une erreur d’usage ou de configuration, 127 si le serveur ne démarre pas. De `vigie gateway` : 0 après un arrêt sur signal, 1 si l’adresse d’écoute est indisponible, 2 pour une erreur d’usage ou de configuration.
 
 ## Environnement
 
@@ -82,8 +113,10 @@ Codes de sortie de `vigie run` : celui du serveur s’il s’arrête de lui-mêm
 | `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | Identité de Vigie dans le backend (défaut `vigie`) |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | Échantillonnage |
 | `NO_COLOR` | Désactive les couleurs de `vigie pins diff` |
+| `HTTPS_PROXY`, `NO_PROXY` | Mandataire sortant de la passerelle vers les serveurs |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR` | Autorités de certification des serveurs, pour une PKI interne |
 
-Le serveur relayé hérite de cet environnement : s’il est lui-même instrumenté, il exporte vers le même collector et ses spans rejoignent ceux de Vigie dans la même trace.
+Le serveur relayé en stdio hérite de cet environnement : s’il est lui-même instrumenté, il exporte vers le même collector et ses spans rejoignent ceux de Vigie dans la même trace.
 
 ## Recettes
 
@@ -116,5 +149,30 @@ version: 1
 defaults:
   mode: audit
 ```
+
+**Une passerelle d’équipe.** Deux serveurs distants, un jeton par client, l’identifiant de service du serveur de facturation lu dans l’environnement, un journal d’audit :
+
+```yaml
+version: 1
+pins_dir: /var/lib/vigie/pins
+audit:
+  file: /var/log/vigie/audit.jsonl
+gateway:
+  listen: 0.0.0.0:8787
+  tokens:
+    equipe-data: ${VIGIE_TOKEN_DATA}
+    ci: ${VIGIE_TOKEN_CI}
+servers:
+  billing:
+    url: https://billing.internal.example/mcp
+    headers:
+      Authorization: Bearer ${BILLING_SERVICE_TOKEN}
+    pins:
+      on_new: block
+  docs:
+    url: https://docs-mcp.example.com/mcp
+```
+
+Le déploiement (conteneur, Kubernetes, répartiteur de charge) : [deploiement.md](deploiement.md).
 
 **Approbations versionnées avec le projet.** Un `vigie.yaml` à la racine du dépôt, `pins_dir: ./.vigie/pins`, et les fichiers d’empreintes passent en revue de code avec le reste. L’hôte lance Vigie avec `--config ./vigie.yaml` ou `VIGIE_CONFIG`.

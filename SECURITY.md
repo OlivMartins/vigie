@@ -6,7 +6,8 @@ Vigie est un composant de sécurité : une faille dans Vigie, c’est une politi
 
 | Version | Correctifs de sécurité |
 |---|---|
-| 0.1.x | Oui |
+| 0.2.x | Oui |
+| 0.1.x | Jusqu’à la publication de 0.3.0 |
 
 ## Signaler une vulnérabilité
 
@@ -31,6 +32,7 @@ Sont notamment concernés :
 - une définition d’outil modifiée ou non approuvée qui atteint le modèle ;
 - une divergence d’analyse entre Vigie et un client ou un serveur MCP (un message lu différemment des deux côtés) ;
 - une valeur sensible écrite dans la télémétrie ou les journaux ;
-- un message qui fait planter Vigie ou le bloque.
+- un message qui fait planter Vigie ou le bloque ;
+- pour la passerelle HTTP : une requête acceptée sans jeton valide quand des jetons sont configurés, une écoute hors boucle locale sans authentification, une page web d’une origine non autorisée qui atteint un serveur, un en-tête HTTP qui fait lire au serveur autre chose que ce que Vigie a contrôlé, une réponse rejouée ou glissée sur un flux qui échappe aux contrôles, un secret configuré dans `headers` qui fuit vers un client ou la télémétrie.
 
-Ne sont pas des failles de Vigie : un serveur malveillant dès sa première version, dont les outils sont approuvés lors de la première session (limite documentée, `on_new: block` pour l’éviter), un secret dans un format que les règles ne reconnaissent pas, un comportement d’outil modifié sans changement de sa définition. Ces limites sont décrites dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#limites-connues) ; les propositions pour les réduire sont bienvenues en ticket public.
+Ne sont pas des failles de Vigie : un serveur malveillant dès sa première version, dont les outils sont approuvés lors de la première session (limite documentée, `on_new: block` pour l’éviter), un secret dans un format que les règles ne reconnaissent pas, un comportement d’outil modifié sans changement de sa définition, une passerelle exposée avec `allow_anonymous: true` sans proxy authentifiant devant elle, les requêtes que le serveur envoie au client sur un flux (relayées, non contrôlées en v0.2). Ces limites sont décrites dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#limites-connues) ; les propositions pour les réduire sont bienvenues en ticket public.

@@ -39,6 +39,9 @@ type Process struct {
 	Stderr io.Writer
 	// MaxFrameBytes bounds a single message, in both directions.
 	MaxFrameBytes int
+	// StopTimeout is how long the server gets to exit once its input is
+	// closed, before Vigie asks it to terminate. Zero means 5 seconds.
+	StopTimeout time.Duration
 }
 
 // Run starts the upstream server and relays messages until either side
@@ -52,6 +55,10 @@ func Run(ctx context.Context, p Process, opts Options) (int, error) {
 	maxBytes := p.MaxFrameBytes
 	if maxBytes <= 0 {
 		maxBytes = jsonrpc.DefaultMaxFrameBytes
+	}
+	grace := exitGrace
+	if p.StopTimeout > 0 {
+		grace = p.StopTimeout
 	}
 	cmd := exec.Command(p.Command[0], p.Command[1:]...)
 	cmd.Env = p.Env
@@ -100,7 +107,7 @@ func Run(ctx context.Context, p Process, opts Options) (int, error) {
 		}
 		// Let the server exit on its own, then insist.
 		serverIn.Close()
-		if !wait(serverDone, exitGrace, log) {
+		if !wait(serverDone, grace, log) {
 			terminate(cmd)
 			if !wait(serverDone, terminateGrace, log) {
 				kill(cmd)
@@ -134,7 +141,7 @@ func Run(ctx context.Context, p Process, opts Options) (int, error) {
 	var waitErr error
 	select {
 	case waitErr = <-exited:
-	case <-time.After(exitGrace):
+	case <-time.After(grace):
 		terminate(cmd)
 		select {
 		case waitErr = <-exited:

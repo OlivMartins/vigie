@@ -16,6 +16,16 @@ const (
 	RPCResponseStatusCode  = attribute.Key("rpc.response.status_code")
 	ErrorType              = attribute.Key("error.type")
 	NetworkTransport       = attribute.Key("network.transport")
+	NetworkProtocolName    = attribute.Key("network.protocol.name")
+	NetworkProtocolVersion = attribute.Key("network.protocol.version")
+	ServerAddress          = attribute.Key("server.address")
+	ServerPort             = attribute.Key("server.port")
+	ClientAddress          = attribute.Key("client.address")
+	ClientPort             = attribute.Key("client.port")
+	HTTPResponseStatusCode = attribute.Key("http.response.status_code")
+	// MCPSessionID identifies the MCP session over HTTP. Vigie records a hash
+	// of the session id: the id itself may be enough to take over a session.
+	MCPSessionID           = attribute.Key("mcp.session.id")
 	GenAIOperationName     = attribute.Key("gen_ai.operation.name")
 	GenAIToolName          = attribute.Key("gen_ai.tool.name")
 	GenAIPromptName        = attribute.Key("gen_ai.prompt.name")
@@ -28,6 +38,8 @@ const (
 const (
 	// VigieUpstream names the upstream server, as given to --server.
 	VigieUpstream = attribute.Key("vigie.upstream.name")
+	// VigieClient names the client authenticated by the gateway.
+	VigieClient = attribute.Key("vigie.client.name")
 	// VigieDecision is allow, warn, audit or block.
 	VigieDecision = attribute.Key("vigie.decision")
 	// VigieRule is the rule behind the decision, such as secrets.arguments.
@@ -60,14 +72,20 @@ const EventFinding = "vigie.finding"
 const (
 	OperationExecuteTool = "execute_tool"
 	TransportPipe        = "pipe"
+	TransportTCP         = "tcp"
 	// ErrorToolError is the error.type of a tool result with isError set.
 	ErrorToolError = "tool_error"
 	// Error types for calls that ended without a response.
 	ErrorCancelled      = "cancelled"
 	ErrorClientClosed   = "client_closed"
 	ErrorUpstreamClosed = "upstream_closed"
-	ErrorShutdown       = "shutdown"
-	ErrorDuplicateID    = "duplicate_id"
+	// ErrorUpstreamUnavailable: the gateway could not reach the server.
+	ErrorUpstreamUnavailable = "upstream_unavailable"
+	// ErrorRejected: the gateway refused the HTTP request before reading its
+	// messages (authentication, origin, size).
+	ErrorRejected    = "rejected"
+	ErrorShutdown    = "shutdown"
+	ErrorDuplicateID = "duplicate_id"
 )
 
 // Metric names.

@@ -33,6 +33,7 @@ policy does not allow.
 
 Usage:
   vigie run --server NAME [flags] -- COMMAND [ARGS...]   relay a stdio MCP server
+  vigie gateway [flags]                                  serve remote MCP servers over HTTP
   vigie pins list [SERVER]                               show pinned tools
   vigie pins diff SERVER TOOL                            review a tool definition change
   vigie pins approve SERVER TOOL --fingerprint F         approve the definition you reviewed
@@ -53,6 +54,8 @@ func Main(ctx context.Context, args []string, s Streams) int {
 	switch args[0] {
 	case "run":
 		return runCommand(ctx, args[1:], s)
+	case "gateway":
+		return gatewayCommand(ctx, args[1:], s)
 	case "pins":
 		return pinsCommand(args[1:], s)
 	case "check":

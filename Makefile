@@ -9,7 +9,7 @@ SONDE ?= ../sonde
 
 export CGO_ENABLED := 0
 
-.PHONY: help build demo test race cover fuzz bench lint compat sonde-check dist clean
+.PHONY: help build demo demo-gateway test race cover fuzz bench lint compat conformance loadtest sonde-check dist clean
 
 help: ## Affiche cette aide
 	@grep -E '^[a-z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -20,6 +20,9 @@ build: ## Compile bin/vigie et le serveur de la démo
 
 demo: build ## Joue la démo : un serveur MCP mis à jour avec une description piégée
 	@go run ./examples/demo
+
+demo-gateway: build ## Joue la même démo en HTTP, à travers la passerelle
+	@go run ./examples/demo -gateway
 
 test: ## Lance les tests
 	go test ./...
@@ -32,12 +35,13 @@ cover: ## Mesure la couverture des tests (cover.html)
 	go tool cover -html=cover.out -o cover.html
 	@go tool cover -func=cover.out | tail -1
 
-fuzz: ## Fuzz l'analyseur JSON-RPC et le détecteur de secrets, 30 s chacun
+fuzz: ## Fuzz l'analyseur JSON-RPC, le lecteur SSE et le détecteur de secrets, 30 s chacun
 	go test -run='^$$' -fuzz=FuzzParseFrame -fuzztime=30s ./internal/jsonrpc
+	go test -run='^$$' -fuzz=FuzzReader -fuzztime=30s ./internal/sse
 	go test -run='^$$' -fuzz=FuzzScanJSON -fuzztime=30s ./internal/secrets
 
 bench: ## Mesure le temps de traitement d'un appel d'outil et d'un tools/list
-	go test -run='^$$' -bench=. -benchmem ./internal/proxy
+	go test -run='^$$' -bench=. -benchmem ./internal/proxy ./internal/gateway
 
 lint: ## Vérifie le style et l'analyse statique (golangci-lint)
 	golangci-lint run ./...
@@ -45,9 +49,16 @@ lint: ## Vérifie le style et l'analyse statique (golangci-lint)
 compat: build ## Teste Vigie entre les SDK MCP officiels (TypeScript v1 et v2)
 	cd test/compat && npm ci --no-audit --no-fund && npm test
 
+loadtest: build ## Mesure la passerelle sous charge (débit et latences, en direct et à travers Vigie)
+	go run ./test/load -vigie bin/vigie
+
+conformance: build ## Passe la suite de conformance MCP officielle à travers la passerelle
+	test/conformance/run.sh
+
 sonde-check: build ## Vérifie l'intégration Sonde (SONDE=chemin d'un clone de Sonde)
 	go run ./examples/demo -traces bin/demo-traces.jsonl > /dev/null
-	python3 scripts/sonde_check.py --sonde $(SONDE) --traces bin/demo-traces.jsonl
+	go run ./examples/demo -gateway -traces bin/demo-gateway-traces.jsonl > /dev/null
+	python3 scripts/sonde_check.py --sonde $(SONDE) --traces bin/demo-traces.jsonl --traces bin/demo-gateway-traces.jsonl
 
 dist: ## Construit les archives de release et leurs sommes de contrôle dans dist/
 	@rm -rf dist && mkdir -p dist

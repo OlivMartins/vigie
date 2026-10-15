@@ -4,7 +4,7 @@
   "description": "Vigie between the official MCP TypeScript SDKs (v1 and v2), in both protocol eras, and against a malicious server",
   "type": "module",
   "scripts": {
-    "test": "node --test --test-concurrency=1 compat.test.mjs adversarial.test.mjs"
+    "test": "node --test --test-concurrency=1 compat.test.mjs adversarial.test.mjs http.test.mjs adversarial-http.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.3.1",

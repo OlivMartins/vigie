@@ -4,8 +4,8 @@ Chaque version répond à une question de ses utilisateurs, livre un ensemble co
 
 | Version | Thème | Question à laquelle elle répond |
 | --- | --- | --- |
-| **0.1** | Voir, épingler, filtrer | « Que font les outils de mon agent, et ont-ils changé depuis que je les ai validés ? » |
-| 0.2 | Passerelle HTTP | « Puis-je mettre Vigie devant mes serveurs MCP distants, pour toute une équipe ? » |
+| 0.1 | Voir, épingler, filtrer | « Que font les outils de mon agent, et ont-ils changé depuis que je les ai validés ? » |
+| **0.2** | Passerelle HTTP | « Puis-je mettre Vigie devant mes serveurs MCP distants, pour toute une équipe ? » |
 | 0.3 | Détections | « Une définition d’outil cache-t-elle des instructions, avant même qu’on l’approuve ? » |
 | 0.4 | Identité | « Qui a appelé quoi, et avec quels droits ? » |
 | 1.0 | Production | « Puis-je en dépendre, et le mettre à jour sans crainte ? » |
@@ -53,20 +53,38 @@ Le socle : un proxy stdio sûr, observable et utile dès la première minute, sa
 
 Mettre Vigie devant des serveurs MCP distants et le partager au sein d’une équipe.
 
-- Mode passerelle Streamable HTTP : en-têtes `Mcp-Method` et `Mcp-Name` de 2026-07-28, flux de réponses SSE, `subscriptions/listen`
-- Plusieurs serveurs amont dans une seule instance, routés par chemin
-- Image conteneur signée, configuration par fichier et variables d’environnement
-- Journal d’audit local des décisions (JSON Lines, rotation), pour qui n’a pas encore de backend
-- Rangée « Outils MCP » dans Sonde : décisions, changements de définitions, latence par outil, alertes
-- Vérification active des empreintes : Vigie relit `tools/list` lui-même avant le premier appel d’une session
-- Limites configurables (taille des messages, délais d’arrêt)
+**Passerelle**
+- [x] `vigie gateway` : Streamable HTTP, plusieurs serveurs distants dans une instance, routés par chemin (`/mcp/{serveur}`)
+- [x] Révisions 2025-03-26 à 2025-11-25 : sessions, flux GET, `DELETE`, lots, reprise des flux interrompus contrôlée
+- [x] Révision 2026-07-28 : en-têtes `Mcp-Method` et `Mcp-Name` vérifiés contre le corps (`-32020`), `subscriptions/listen`, réponses en plusieurs allers-retours
+- [x] Réponses JSON et SSE contrôlées message par message ; redirections, erreurs HTTP porteuses d’un résultat et types inattendus écartés
+- [x] Sans état : une conversation par échange HTTP, instances multiples sans affinité de session
+- [x] Fermée par défaut : écoute locale, `Origin` et `Host` vérifiés, jetons par client, refus d’écouter sur le réseau sans authentification
+- [x] Identifiants vers les serveurs (`servers.*.headers`), secrets lus dans l’environnement
 
-**Critères de sortie** : suite de conformance officielle MCP passée à travers la passerelle, test de charge publié, déploiement documenté derrière un répartiteur de charge sans affinité de session.
+**Exploitation**
+- [x] Image conteneur distroless, multi-architecture, signée (cosign), avec SBOM et provenance
+- [x] Sondes `/healthz` et `/readyz`, arrêt progressif
+- [x] Journal d’audit local des décisions (JSON Lines, rotation), partagé entre processus, en stdio comme en HTTP
+- [x] Limites configurables : taille des messages et des requêtes, délais d’arrêt
+- [x] Télémétrie HTTP : `network.*`, `server.*`, `client.*`, `mcp.session.id` haché, contexte de trace par en-têtes
+
+**Qualité**
+- [x] SDK officiels (v1, v2) à travers la passerelle, dans les deux époques ; dix attaques d’un serveur HTTP malveillant
+- [x] Suite de conformance officielle passée à travers la passerelle, en CI (`make conformance`)
+- [x] Test de charge publié (`make loadtest`), fuzzing du lecteur SSE
+- [x] Démo HTTP (`make demo-gateway`), intégration Sonde vérifiée sur les spans HTTP
+
+**Critères de sortie** : suite de conformance officielle MCP passée à travers la passerelle, test de charge publié, déploiement documenté derrière un répartiteur de charge sans affinité de session. Tenus : chaque scénario de conformance réussi en direct réussit à travers Vigie, pour 2025-11-25 et 2026-07-28 ; résultats de charge dans [l’architecture](docs/ARCHITECTURE.md#sous-charge) ; déploiement dans [docs/deploiement.md](docs/deploiement.md).
+
+Reportés : la vérification active des empreintes (Vigie relit `tools/list` lui-même) passe en 0.3, le passif suffisant tant que le modèle ne voit que des listes filtrées ; la rangée « Outils MCP » du tableau de bord appartient au dépôt de Sonde, les requêtes de [docs/sonde.md](docs/sonde.md) en sont la base.
 
 ## 0.3 · Détections
 
 Repérer une définition piégée dès sa première apparition, sans attendre qu’elle change.
 
+- Vérification active des empreintes : Vigie relit `tools/list` lui-même avant le premier appel, pour les clients qui gardent la liste en cache
+- Passerelle : en-têtes `Mcp-Param-*` vérifiés contre les arguments, d’après les annotations `x-mcp-header` de la définition épinglée
 - Épingler aussi les `instructions` du serveur (`initialize`, `server/discover`) et les descriptions de prompts et de ressources
 - Heuristiques déterministes sur les définitions : balises d’instructions (`<IMPORTANT>`), caractères invisibles et de contrôle bidirectionnel, références à des fichiers sensibles, mentions d’autres outils (*tool shadowing*), consignes de dissimulation
 - Règles de secrets personnalisées dans la configuration, exemptions par outil

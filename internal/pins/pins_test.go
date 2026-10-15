@@ -328,3 +328,45 @@ func TestConcurrentWritersKeepEveryUpdate(t *testing.T) {
 		t.Errorf("%d tools in the pin file, want 16: updates were lost", len(f.Tools))
 	}
 }
+
+// A shared store (the gateway) approves new tools during its first listing
+// only: tools that appear afterwards wait for an approval.
+func TestSharedStoreFirstListing(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, "billing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BeginShared(); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Approves(PinFirstSession) {
+		t.Fatal("an empty pin file opens the first session")
+	}
+	first := []Observed{{Name: "a", Definition: json.RawMessage(`{"name":"a"}`)}}
+	if obs, err := s.Observe(first, PinFirstSession); err != nil || obs[0].Status != StatusApproved {
+		t.Fatalf("%v %+v", err, obs)
+	}
+	// Another page of the first list, a moment later.
+	page := []Observed{{Name: "b", Definition: json.RawMessage(`{"name":"b"}`)}}
+	if obs, _ := s.Observe(page, PinFirstSession); obs[0].Status != StatusApproved {
+		t.Errorf("second page: %+v", obs)
+	}
+	s.firstListingUntil = time.Now().Add(-time.Second)
+	later := []Observed{{Name: "c", Definition: json.RawMessage(`{"name":"c"}`)}}
+	if obs, _ := s.Observe(later, PinFirstSession); obs[0].Status != StatusPending {
+		t.Errorf("a tool after the first listing: %+v", obs)
+	}
+	if s.Approves(PinFirstSession) {
+		t.Error("the first session is over")
+	}
+
+	// Another instance, started later, does not reopen it.
+	other, _ := Open(dir, "billing")
+	if err := other.BeginShared(); err != nil {
+		t.Fatal(err)
+	}
+	if other.Approves(PinFirstSession) {
+		t.Error("a pin file with tools never reopens the first session")
+	}
+}

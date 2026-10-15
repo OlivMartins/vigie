@@ -4,7 +4,7 @@ Ce document fixe ce que Vigie doit résoudre, pour qui, et comment on saura que 
 
 ## En une phrase
 
-Vigie est le poste de contrôle des outils d’un agent IA : il se place entre l’agent et ses serveurs MCP, trace chaque appel en OpenTelemetry, épingle les définitions d’outils validées et bloque ce que la politique n’autorise pas.
+Vigie est le poste de contrôle des outils d’un agent IA : il se place entre l’agent et ses serveurs MCP, locaux ou distants, trace chaque appel en OpenTelemetry, épingle les définitions d’outils validées et bloque ce que la politique n’autorise pas.
 
 ## Le problème
 
@@ -36,12 +36,19 @@ Sources : [CSA, MCP Tool Poisoning](https://labs.cloudsecurityalliance.org/resea
 
 ## La réponse
 
-Un binaire unique, placé devant la commande du serveur MCP :
+Un binaire unique, sous deux formes. Devant la commande d’un serveur local, sur le poste du développeur :
 
 ```text
 agent ── stdio ──▶ vigie run --server billing -- npx billing-mcp ── stdio ──▶ serveur MCP
                      │
                      └── OTLP ──▶ collector ──▶ Sonde, Langfuse, Grafana...
+```
+
+Ou en passerelle HTTP devant des serveurs distants, partagée par une équipe et déployée comme un service :
+
+```text
+agents ── HTTP ──▶ vigie gateway  /mcp/billing ── HTTP ──▶ https://billing.example/mcp
+                                  /mcp/github  ── HTTP ──▶ https://api.githubcopilot.com/mcp
 ```
 
 | Promesse | Ce que fait Vigie |
@@ -58,27 +65,32 @@ agent ── stdio ──▶ vigie run --server billing -- npx billing-mcp ─�
 4. **Expliquer chaque refus.** Le modèle reçoit une raison lisible et l’humain la commande pour réagir.
 5. **Échouer fermé là où c’est sûr.** Un fichier d’empreintes illisible bloque ; en mode enforce, un message que Vigie ne sait pas lire sans ambiguïté n’est relayé dans aucun sens.
 6. **Zéro configuration pour commencer.** Sans fichier, les valeurs par défaut protègent déjà : outils de la première session épinglés, modifications et nouveaux outils bloqués, secrets bloqués.
+7. **Fermé par défaut.** Ce qui expose des outils au réseau se décide explicitement : la passerelle écoute la boucle locale, et refuse d’écouter au-delà sans authentification.
 
-## Périmètre de la v0.1
+## Périmètre
 
-Inclus : proxy stdio, toutes révisions du protocole (de 2024-11-05 à 2026-07-28), traces et métriques MCP, politique par serveur en YAML validé, empreintes et commandes `vigie pins`, détection de secrets, modes enforce et audit, démo scriptée, intégration documentée avec Sonde.
+**v0.1** : proxy stdio, toutes révisions du protocole (de 2024-11-05 à 2026-07-28), traces et métriques MCP, politique par serveur en YAML validé, empreintes et commandes `vigie pins`, détection de secrets, modes enforce et audit, démo scriptée, intégration documentée avec Sonde.
+
+**v0.2** : passerelle Streamable HTTP pour des serveurs distants, dans les deux époques du transport, avec la même politique ; en-têtes vérifiés contre le corps ; jetons par client ; journal d’audit ; image conteneur signée et déploiement sans affinité de session ; suite de conformance officielle passée à travers la passerelle.
 
 Exclu, et pourquoi :
 
 | Hors périmètre | Raison | Quand |
 | --- | --- | --- |
-| Transport Streamable HTTP | Les serveurs les plus exposés tournent en local, en stdio, avec les droits de l’utilisateur. Le mode passerelle HTTP mérite son propre cycle. | v0.2 |
+| Transport HTTP+SSE de 2024-11-05 | Déprécié depuis 2025-03-26, appelé à disparaître ; les serveurs encore en circulation proposent Streamable HTTP. | Non prévu |
+| Exposer un serveur stdio en HTTP | Une passerelle qui lance des processus pour le compte de clients distants change de modèle de menace ; les serveurs distants d’abord. | À évaluer |
 | Modifier les arguments en vol (masquage) | Changer silencieusement une requête trompe l’agent ; bloquer avec une raison claire est plus sûr. | À évaluer, v0.3 |
 | Détection des injections par LLM | Coûteuse, non déterministe, lente sur le chemin critique. Les heuristiques déterministes viennent d’abord. | v0.3 (heuristiques) |
-| Identité et autorisation par utilisateur | Suppose le transport HTTP et OAuth. | v0.4 |
+| Identité et autorisation par utilisateur, relais OAuth | La v0.2 attribue les appels à un client (jeton), pas à une personne ; la découverte OAuth à travers la passerelle suppose de réécrire les métadonnées de ressource. | v0.4 |
 | Interface graphique | Le backend d’observabilité existant est l’interface ; Sonde fournit les vues. | Non prévu |
 
 ## Comment on saura que c’est réussi
 
-| Indicateur | Cible v0.1 | Comment on le mesure |
+| Indicateur | Cible | Comment on le mesure |
 | --- | --- | --- |
-| Transparence | 0 message altéré hors cas documentés | Tests de relais octet par octet, tests avec les SDK MCP officiels |
-| Surcoût | < 1 ms par appel d’outil aller-retour | Benchmarks Go dans la CI (≈ 65 µs mesurés) |
+| Transparence | 0 message altéré hors cas documentés | Tests de relais octet par octet, tests avec les SDK MCP officiels en stdio et en HTTP |
+| Conformance (v0.2) | Tout scénario de la suite officielle réussi en direct réussit à travers la passerelle | `make conformance` en CI, révisions 2025-11-25 et 2026-07-28 |
+| Surcoût | < 1 ms par appel d’outil aller-retour | Benchmarks Go dans la CI (≈ 50 µs en stdio, ≈ 100 µs par échange en passerelle) ; test de charge publié (≈ 0,5 ms au p50 à faible concurrence, saut HTTP compris) |
 | Fuite de secrets | 0 valeur sensible dans la télémétrie | Test dédié, contenu capturé compris |
 | Délai de mise en route | < 5 minutes jusqu’à la première trace | Démarrage rapide du README, démo `make demo` |
 | Explicabilité | 100 % des refus portent règle, raison et emplacement | Tests des spans et du résultat renvoyé au modèle |
@@ -87,11 +99,11 @@ Après publication, on suivra l’adoption (étoiles, téléchargements des rele
 
 ## Paysage et positionnement
 
-- **Passerelles MCP d’entreprise** (offres SaaS ou plateformes de gouvernance) : complètes, centralisées, souvent propriétaires. Vigie vise d’abord le poste et le serveur local, sans dépendance à un service.
+- **Passerelles MCP d’entreprise** (offres SaaS ou plateformes de gouvernance) : complètes, centralisées, souvent propriétaires. Vigie couvre le poste et le serveur local comme la passerelle d’équipe, avec un binaire ouvert et sans service à opérer en dehors du sien.
 - **Scanners MCP** comme mcp-scan d’Invariant Labs, cité par la CSA : analysent les configurations et épinglent les outils. Vigie applique la même idée en continu, dans le flux, et l’expose en télémétrie standard.
 - **Plateformes d’observabilité IA** (Langfuse, Arize Phoenix, LangSmith) : tracent l’agent de l’intérieur. Vigie trace la frontière entre l’agent et ses outils et leur envoie ses spans.
 
-Ce qui distingue Vigie : natif OpenTelemetry selon les conventions MCP officielles, application en ligne plutôt qu’audit après coup, un binaire statique sans service à opérer, une politique en YAML versionnable, compatible avec la révision sans état 2026-07-28 comme avec les précédentes.
+Ce qui distingue Vigie : natif OpenTelemetry selon les conventions MCP officielles, application en ligne plutôt qu’audit après coup, le même contrôle en stdio et en HTTP, un binaire statique sans dépendance, une politique en YAML versionnable, compatible avec la révision sans état 2026-07-28 comme avec les précédentes, et vérifié par la suite de conformance officielle.
 
 ## Risques
 
@@ -102,4 +114,5 @@ Ce qui distingue Vigie : natif OpenTelemetry selon les conventions MCP officiell
 | Conventions OpenTelemetry encore en statut Development | Noms d’attributs centralisés dans un seul fichier ; changements signalés dans le journal des modifications |
 | Le protocole MCP évolue vite | Proxy au niveau JSON-RPC qui relaie ce qu’il ne connaît pas ; tests sur plusieurs révisions |
 | Confiance à la première session | Documentée comme limite ; les outils apparus ensuite attendent une approbation ; `on_new: block` pour les serveurs tiers |
-| Divergences d’analyse entre Vigie et les pairs | Messages ambigus refusés, réponses appariées à l’octet près, tests adverses face aux SDK officiels |
+| Divergences d’analyse entre Vigie et les pairs | Messages ambigus refusés, réponses appariées à l’octet près, en-têtes HTTP vérifiés contre le corps, tests adverses face aux SDK officiels |
+| Une passerelle exposée devient une porte d’entrée vers les outils | Écoute locale par défaut, refus de démarrer sur le réseau sans authentification, jetons comparés en temps constant, `Origin` et `Host` vérifiés |

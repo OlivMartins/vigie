@@ -1,6 +1,7 @@
 // Command demo plays a scripted session through Vigie, the way an MCP host
 // would: a billing server is used, then updated with a poisoned tool
-// description. Run it with "make demo".
+// description. Run it with "make demo" (stdio, vigie run) or "make
+// demo-gateway" (HTTP, vigie gateway in front of a remote server).
 //
 // Everything happens in a temporary directory: the demo never reads or
 // writes your own configuration and pin files.
@@ -8,16 +9,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 var (
@@ -26,6 +31,7 @@ var (
 	configTpl = flag.String("config", "examples/demo/vigie.yaml", "demo configuration")
 	keep      = flag.Bool("keep", false, "keep the working directory (pin files, traces) after the demo")
 	tracesOut = flag.String("traces", "", "also copy the spans of the demo to this file (JSON Lines)")
+	viaHTTP   = flag.Bool("gateway", false, "play the demo over HTTP, through vigie gateway, instead of stdio")
 )
 
 // The leaked key is assembled at run time: the repository holds no literal
@@ -54,17 +60,35 @@ func run() error {
 	}
 	cfg := filepath.Join(dir, "vigie.yaml")
 	content := string(tpl) + "\npins_dir: " + filepath.Join(dir, "pins") + "\n"
+	traces := filepath.Join(dir, "traces.jsonl")
+	var gw *gatewayProcess
+	if *viaHTTP {
+		if gw, err = newGateway(); err != nil {
+			return err
+		}
+		// The server section of the template gets the address of the server.
+		content = strings.Replace(content, "  billing:\n", "  billing:\n    url: http://"+gw.serverAddr+"/mcp\n", 1)
+	}
 	if err := os.WriteFile(cfg, []byte(content), 0o600); err != nil {
 		return err
 	}
-	traces := filepath.Join(dir, "traces.jsonl")
+	start := func(release string) (*session, error) { return startStdio(cfg, traces, release) }
 
 	title("Vigie · démo : un serveur MCP de facturation, une mise à jour piégée")
-	fmt.Println("Client MCP scripté → vigie run --server billing → serveur billing (stdio, protocole 2026-07-28)")
+	if gw != nil {
+		if err := gw.start(cfg, traces); err != nil {
+			return err
+		}
+		defer gw.stop()
+		start = gw.session
+		fmt.Println("Client MCP scripté → vigie gateway (/mcp/billing) → serveur billing distant (HTTP, protocole 2026-07-28)")
+	} else {
+		fmt.Println("Client MCP scripté → vigie run --server billing → serveur billing (stdio, protocole 2026-07-28)")
+	}
 
 	// Session 1: the server as it was reviewed.
 	section("Session 1 · billing 1.0")
-	s, err := start(cfg, traces, "1.0")
+	s, err := start("1.0")
 	if err != nil {
 		return err
 	}
@@ -80,7 +104,7 @@ func run() error {
 
 	// Session 2: the same server after an update.
 	section("Session 2 · billing 1.1, après mise à jour du serveur")
-	s, err = start(cfg, traces, "1.1")
+	s, err = start("1.1")
 	if err != nil {
 		return err
 	}
@@ -121,15 +145,16 @@ func run() error {
 	return nil
 }
 
+// session is one MCP session of the scripted client.
 type session struct {
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  *bufio.Reader
-	nextID  int
-	release string
+	// roundTrip sends a request and returns the response.
+	roundTrip func(msg []byte, method, name string) ([]byte, error)
+	closeFn   func() error
+	nextID    int
 }
 
-func start(cfg, traces, release string) (*session, error) {
+// startStdio starts vigie run in front of the demo server.
+func startStdio(cfg, traces, release string) (*session, error) {
 	cmd := exec.Command(*vigieBin, "run", "--server", "billing", "--config", cfg,
 		"--trace-file", traces, "--log-level", "error", "--", *serverBin)
 	cmd.Env = append(os.Environ(), "DEMO_RELEASE="+release, "OTEL_EXPORTER_OTLP_ENDPOINT=")
@@ -145,7 +170,114 @@ func start(cfg, traces, release string) (*session, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting %s: %w (run \"make build\" first)", *vigieBin, err)
 	}
-	return &session{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), release: release}, nil
+	out := bufio.NewReader(stdout)
+	return &session{
+		roundTrip: func(msg []byte, _, _ string) ([]byte, error) {
+			if _, err := stdin.Write(append(msg, '\n')); err != nil {
+				return nil, err
+			}
+			return out.ReadBytes('\n')
+		},
+		closeFn: func() error {
+			stdin.Close()
+			return cmd.Wait()
+		},
+	}, nil
+}
+
+// gatewayProcess runs vigie gateway for the HTTP demo; the demo server runs
+// behind it as a remote server, restarted for each release.
+type gatewayProcess struct {
+	cmd                     *exec.Cmd
+	serverAddr, gatewayAddr string
+}
+
+func newGateway() (*gatewayProcess, error) {
+	serverAddr, err := freeAddr()
+	if err != nil {
+		return nil, err
+	}
+	gatewayAddr, err := freeAddr()
+	if err != nil {
+		return nil, err
+	}
+	return &gatewayProcess{serverAddr: serverAddr, gatewayAddr: gatewayAddr}, nil
+}
+
+func (g *gatewayProcess) start(cfg, traces string) error {
+	g.cmd = exec.Command(*vigieBin, "gateway", "--config", cfg, "--listen", g.gatewayAddr,
+		"--trace-file", traces, "--log-level", "error")
+	g.cmd.Env = append(os.Environ(), "OTEL_EXPORTER_OTLP_ENDPOINT=")
+	g.cmd.Stderr = os.Stderr
+	if err := g.cmd.Start(); err != nil {
+		return fmt.Errorf("starting %s: %w (run \"make build\" first)", *vigieBin, err)
+	}
+	return waitFor("http://" + g.gatewayAddr + "/healthz")
+}
+
+func (g *gatewayProcess) stop() {
+	_ = g.cmd.Process.Signal(os.Interrupt)
+	_ = g.cmd.Wait()
+}
+
+// session starts the demo server of a release behind the gateway.
+func (g *gatewayProcess) session(release string) (*session, error) {
+	server := exec.Command(*serverBin, "-http", g.serverAddr)
+	server.Env = append(os.Environ(), "DEMO_RELEASE="+release)
+	server.Stderr = os.Stderr
+	if err := server.Start(); err != nil {
+		return nil, fmt.Errorf("starting %s: %w (run \"make build\" first)", *serverBin, err)
+	}
+	if err := waitFor("http://" + g.serverAddr + "/mcp"); err != nil {
+		return nil, err
+	}
+	url := "http://" + g.gatewayAddr + "/mcp/billing"
+	return &session{
+		roundTrip: func(msg []byte, method, name string) ([]byte, error) {
+			req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(msg))
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+			req.Header.Set("Mcp-Method", method)
+			if name != "" {
+				req.Header.Set("Mcp-Name", name)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return nil, err
+			}
+			defer resp.Body.Close()
+			return io.ReadAll(resp.Body)
+		},
+		closeFn: func() error {
+			_ = server.Process.Kill()
+			_ = server.Wait()
+			return nil
+		},
+	}, nil
+}
+
+func freeAddr() (string, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	defer ln.Close()
+	return ln.Addr().String(), nil
+}
+
+func waitFor(url string) error {
+	for i := 0; i < 200; i++ {
+		if resp, err := http.Get(url); err == nil {
+			resp.Body.Close()
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return fmt.Errorf("%s did not answer", url)
 }
 
 // request sends a request with the per-request _meta of the stateless
@@ -161,10 +293,8 @@ func (s *session) request(method string, params map[string]any) (json.RawMessage
 		"io.modelcontextprotocol/clientInfo":         map[string]any{"name": "vigie-demo", "version": "1"},
 	}
 	msg, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": s.nextID, "method": method, "params": params})
-	if _, err := s.stdin.Write(append(msg, '\n')); err != nil {
-		return nil, err
-	}
-	line, err := s.stdout.ReadBytes('\n')
+	name, _ := params["name"].(string)
+	line, err := s.roundTrip(msg, method, name)
 	if err != nil {
 		return nil, err
 	}
@@ -246,10 +376,7 @@ func (s *session) callTool(name string, args map[string]any, context string) {
 	}
 }
 
-func (s *session) close() error {
-	s.stdin.Close()
-	return s.cmd.Wait()
-}
+func (s *session) close() error { return s.closeFn() }
 
 // Trace file reading. The file holds one JSON object per span, as written by
 // the OpenTelemetry stdout exporter.
