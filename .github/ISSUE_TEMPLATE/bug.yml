@@ -1,0 +1,32 @@
+name: Anomalie
+description: Vigie ne fait pas ce qu'il devrait
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Pour une faille de sécurité, utilisez plutôt le signalement privé (onglet Security).
+  - type: textarea
+    id: what
+    attributes:
+      label: Ce qui se passe
+      description: Ce que vous avez fait, ce que vous attendiez, ce que Vigie a fait.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Sortie de `vigie version`
+    validations:
+      required: true
+  - type: input
+    id: peers
+    attributes:
+      label: Client et serveur MCP
+      description: Par exemple Claude Code 2.x avec @modelcontextprotocol/server-filesystem, révision 2025-11-25
+  - type: textarea
+    id: logs
+    attributes:
+      label: Journaux et configuration
+      description: Sortie de `vigie run --log-level debug` et votre vigie.yaml, sans secret réel.
+      render: text

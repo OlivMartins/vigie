@@ -1,0 +1,38 @@
+# Construit les binaires des six plateformes et leurs sommes de contrôle, puis
+# les joint à la release. Se déclenche à la publication d'une release, ou à la
+# main (onglet Actions > Release > Run workflow) pour compléter une release existante.
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag de la release à compléter (par exemple v0.1.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  assets:
+    name: Construire et joindre les binaires
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - name: Construire les archives
+        run: make dist VERSION="$TAG"
+      - name: Joindre les fichiers à la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" --clobber dist/vigie_* dist/SHA256SUMS

@@ -1,0 +1,19 @@
+name: Proposition
+description: Une idée pour Vigie
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Le problème
+      description: La situation dans laquelle Vigie vous manque. Le besoin avant la solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Ce que vous proposez
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Ce que vous faites aujourd'hui

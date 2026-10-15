@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go: ["1.26.x", stable]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+      - run: go vet ./...
+      - name: Tests avec le détecteur de concurrence
+        run: go test -race -coverprofile=cover.out ./...
+      - name: Couverture
+        run: go tool cover -func=cover.out | tail -1
+      - name: Les benchmarks tournent
+        run: go test -run='^$' -bench=. -benchtime=100x ./internal/proxy
+
+  lint:
+    name: Analyse statique
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.14.0
+
+  fuzz:
+    name: Fuzzing court
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -run='^$' -fuzz=FuzzParseFrame -fuzztime=20s ./internal/jsonrpc
+      - run: go test -run='^$' -fuzz=FuzzScanJSON -fuzztime=20s ./internal/secrets
+
+  build:
+    name: Compilation des six plateformes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make dist
+      - run: cat dist/SHA256SUMS
+
+  demo:
+    name: Démo et SDK MCP officiels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: test/compat/package-lock.json
+      - name: La démo se joue jusqu'au bout
+        run: make demo
+      - name: Vigie entre les SDK TypeScript v1 et v2, dans les deux ères du protocole
+        run: make compat
+
+  sonde:
+    name: Intégration Sonde dans ClickHouse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: OlivMartins/sonde
+          path: sonde
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install chdb pyyaml
+      - name: Liste blanche et requêtes de docs/sonde.md sur le schéma de Sonde
+        run: make sonde-check SONDE=sonde

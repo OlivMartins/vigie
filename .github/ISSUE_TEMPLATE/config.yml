@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Signaler une faille de sécurité
+    url: https://github.com/OlivMartins/vigie/security/advisories/new
+    about: En privé, merci de ne pas ouvrir de ticket public.
