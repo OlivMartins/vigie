@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/OlivMartins/vigie/internal/filelock"
 )
 
 // FileVersion is the format version of pin files.
@@ -427,23 +429,7 @@ func (s *Store) load() (*File, error) {
 
 // lockFile takes an exclusive lock shared by every process using this pin
 // file, so that read-modify-write cycles do not overwrite each other.
-func (s *Store) lockFile() (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(s.path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := lockExclusive(f); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("locking %s: %w", f.Name(), err)
-	}
-	return func() {
-		_ = unlockFile(f)
-		f.Close()
-	}, nil
-}
+func (s *Store) lockFile() (func(), error) { return filelock.Lock(s.path) }
 
 // save writes f atomically: a reader sees the old file or the new one, never
 // a partial write.
