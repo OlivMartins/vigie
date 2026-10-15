@@ -1,0 +1,35 @@
+# Attribute keys emitted by Vigie that Sonde's collector does not keep yet.
+#
+# Sonde's redaction processor (otel-collector/config.yaml, redaction/genai)
+# drops every attribute key it does not list. Append these keys to its
+# allowed_keys list: gen_ai.operation.name, gen_ai.tool.name, error.type and
+# the service.* keys are already there.
+#
+# scripts/sonde_check.py fails when Vigie emits a key that is neither here
+# nor in Sonde's own list.
+
+      # MCP semantic conventions (Vigie)
+      - mcp.method.name
+      - mcp.protocol.version
+      - mcp.resource.uri
+      - jsonrpc.request.id
+      - jsonrpc.protocol.version
+      - rpc.response.status_code
+      - network.transport
+      - gen_ai.prompt.name
+      # Vigie decisions
+      - vigie.upstream.name
+      - vigie.decision
+      - vigie.rule
+      - vigie.mode
+      - vigie.pin.status
+      - vigie.result_type
+      - vigie.tools.listed
+      - vigie.tools.hidden
+      - vigie.tools.new
+      - vigie.tools.changed
+      - vigie.tools.pending
+      - vigie.finding.action
+      - vigie.finding.location
+      - vigie.finding.reason
+      - vigie.secret.type
