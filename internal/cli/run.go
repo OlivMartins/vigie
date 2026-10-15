@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/OlivMartins/vigie/internal/audit"
 	"github.com/OlivMartins/vigie/internal/config"
 	"github.com/OlivMartins/vigie/internal/pins"
 	"github.com/OlivMartins/vigie/internal/policy"
@@ -76,6 +77,14 @@ func runCommand(ctx context.Context, args []string, s Streams) int {
 		}
 	}
 
+	auditLog, err := openAudit(cfg)
+	if err != nil {
+		return fail(s, exitUsage, err)
+	}
+	if auditLog != nil {
+		defer auditLog.Close()
+	}
+
 	tel, err := telemetry.Setup(ctx, telemetry.Options{
 		ServiceVersion: version.Version(),
 		TraceFile:      *traceFile,
@@ -100,6 +109,9 @@ func runCommand(ctx context.Context, args []string, s Streams) int {
 	if store != nil {
 		attrs = append(attrs, "pins", store.Path())
 	}
+	if auditLog != nil {
+		attrs = append(attrs, "audit", auditLog.Path())
+	}
 	if path != "" && !cfg.HasServer(*server) {
 		attrs = append(attrs, "policy", "defaults (no section for this server)")
 	}
@@ -110,15 +122,18 @@ func runCommand(ctx context.Context, args []string, s Streams) int {
 	defer stop()
 	scanner := secrets.NewScanner()
 	code, err := proxy.Run(ctx, proxy.Process{
-		Command: command,
-		Stdin:   s.In,
-		Stdout:  s.Out,
-		Stderr:  s.Err,
+		Command:       command,
+		Stdin:         s.In,
+		Stdout:        s.Out,
+		Stderr:        s.Err,
+		MaxFrameBytes: int(cfg.Limits.MaxMessageSize),
+		StopTimeout:   cfg.Limits.StopTimeout,
 	}, proxy.Options{
 		Engine:         policy.NewEngine(*server, pol, store, scanner),
 		Telemetry:      tel,
 		Scanner:        scanner,
 		Logger:         logger,
+		Audit:          auditLog,
 		Propagate:      cfg.Telemetry.PropagateContext,
 		CaptureContent: cfg.Telemetry.CaptureContent,
 	})
@@ -127,6 +142,14 @@ func runCommand(ctx context.Context, args []string, s Streams) int {
 	}
 	logger.Info("vigie stopped", "exit_code", code)
 	return code
+}
+
+// openAudit opens the audit log, when the configuration names one.
+func openAudit(cfg *config.Config) (*audit.Log, error) {
+	if cfg.Audit.File == "" {
+		return nil, nil
+	}
+	return audit.Open(audit.Options{Path: cfg.Audit.File, MaxSize: cfg.Audit.MaxSize, MaxFiles: cfg.Audit.MaxFiles})
 }
 
 func newLogger(s Streams, level, format string) (*slog.Logger, error) {
