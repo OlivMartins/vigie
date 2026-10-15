@@ -32,6 +32,9 @@ type Server struct {
 	Name    string
 	Version string
 	Tools   []Tool
+	// NoHistory keeps no record of the messages received: load tests send
+	// millions.
+	NoHistory bool
 
 	mu       sync.Mutex
 	received []map[string]json.RawMessage
@@ -85,9 +88,11 @@ func (s *Server) Serve(r io.Reader, w io.Writer) error {
 // process records a message and returns the response to a request, nil for a
 // notification.
 func (s *Server) process(msg map[string]json.RawMessage) map[string]any {
-	s.mu.Lock()
-	s.received = append(s.received, msg)
-	s.mu.Unlock()
+	if !s.NoHistory {
+		s.mu.Lock()
+		s.received = append(s.received, msg)
+		s.mu.Unlock()
+	}
 	id, isRequest := msg["id"]
 	if !isRequest {
 		return nil
