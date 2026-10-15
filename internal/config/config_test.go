@@ -120,6 +120,20 @@ func TestInvalidFiles(t *testing.T) {
 		{"bad server name", "version: 1\nservers:\n  ../evil: {}\n", "invalid server name"},
 		{"duplicate key", "version: 1\ndefaults:\n  mode: audit\n  mode: enforce\n", "duplicate"},
 		{"several errors", "version: 1\ndefaults:\n  mode: x\n  secrets:\n    arguments: y\n", "secrets.arguments"},
+		{"bad url", "version: 1\nservers:\n  b:\n    url: ftp://x/mcp\n", "servers.b.url"},
+		{"credentials in url", "version: 1\nservers:\n  b:\n    url: https://u:p@x/mcp\n", "put credentials in headers"},
+		{"headers without url", "version: 1\nservers:\n  b:\n    headers:\n      X-A: b\n", "only used with url"},
+		{"reserved header", "version: 1\nservers:\n  b:\n    url: https://x/mcp\n    headers:\n      Mcp-Session-Id: s\n", "set by the client or by Vigie"},
+		{"param header", "version: 1\nservers:\n  b:\n    url: https://x/mcp\n    headers:\n      Mcp-Param-Region: eu\n", "set by the client or by Vigie"},
+		{"unset variable", "version: 1\nservers:\n  b:\n    url: https://x/mcp\n    headers:\n      Authorization: Bearer ${VIGIE_UNSET_FOR_TEST}\n", "VIGIE_UNSET_FOR_TEST is not set"},
+		{"short token", "version: 1\ngateway:\n  tokens:\n    ci: short\n", "24 characters at least"},
+		{"bad listen", "version: 1\ngateway:\n  listen: 8787\n", "gateway.listen"},
+		{"bad origin", "version: 1\ngateway:\n  allowed_origins: [\"https://a.example/\"]\n", "allowed_origins[0]"},
+		{"half tls", "version: 1\ngateway:\n  tls:\n    cert_file: c.pem\n", "give both cert_file and key_file"},
+		{"bad size", "version: 1\nlimits:\n  max_message_size: 4MB\n", "is not a size"},
+		{"tiny size", "version: 1\nlimits:\n  max_message_size: 1KiB\n", "64KiB at least"},
+		{"bad duration", "version: 1\nlimits:\n  stop_timeout: soon\n", "limits.stop_timeout"},
+		{"audit without file", "version: 1\naudit:\n  max_files: 3\n", "need a file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -168,6 +182,92 @@ func TestExampleConfigurationIsValid(t *testing.T) {
 	for _, path := range []string{"../../examples/vigie.yaml", "../../examples/demo/vigie.yaml"} {
 		if _, err := Load(path); err != nil {
 			t.Errorf("%s: %v", path, err)
+		}
+	}
+}
+
+func TestGatewaySections(t *testing.T) {
+	t.Setenv("VIGIE_TEST_TOKEN", "0123456789abcdef0123456789abcdef")
+	t.Setenv("VIGIE_TEST_UPSTREAM", "upstream-secret")
+	path := write(t, `
+version: 1
+audit:
+  file: ./audit/vigie.jsonl
+  max_size: 10MiB
+  max_files: 3
+limits:
+  max_message_size: 8MiB
+  stop_timeout: 20s
+gateway:
+  listen: 0.0.0.0:9000
+  allowed_origins: ["https://inspector.example"]
+  tokens:
+    equipe-data: ${VIGIE_TEST_TOKEN}
+  tls:
+    cert_file: tls/cert.pem
+    key_file: tls/key.pem
+  max_request_size: 512KiB
+servers:
+  billing:
+    url: https://billing.example.com/mcp
+    headers:
+      authorization: Bearer ${VIGIE_TEST_UPSTREAM}
+    tools:
+      deny: ["delete_*"]
+  local: {}
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	if cfg.Audit.File != filepath.Join(dir, "audit", "vigie.jsonl") || cfg.Audit.MaxSize != 10<<20 || cfg.Audit.MaxFiles != 3 {
+		t.Errorf("audit = %+v", cfg.Audit)
+	}
+	if cfg.Limits.MaxMessageSize != 8<<20 || cfg.Limits.StopTimeout.String() != "20s" {
+		t.Errorf("limits = %+v", cfg.Limits)
+	}
+	g := cfg.Gateway
+	if g.Listen != "0.0.0.0:9000" || g.Tokens["equipe-data"] != "0123456789abcdef0123456789abcdef" || g.MaxRequestSize != 512<<10 {
+		t.Errorf("gateway = %+v", g)
+	}
+	if g.TLSCertFile != filepath.Join(dir, "tls", "cert.pem") || g.TLSKeyFile != filepath.Join(dir, "tls", "key.pem") {
+		t.Errorf("tls = %s %s", g.TLSCertFile, g.TLSKeyFile)
+	}
+	up, ok := cfg.Upstream("billing")
+	if !ok || up.URL.String() != "https://billing.example.com/mcp" || up.Headers.Get("Authorization") != "Bearer upstream-secret" {
+		t.Errorf("upstream = %+v", up)
+	}
+	if _, ok := cfg.Upstream("local"); ok {
+		t.Error("a server without url has no upstream")
+	}
+	if got := strings.Join(cfg.Upstreams(), ","); got != "billing" {
+		t.Errorf("upstreams = %s", got)
+	}
+	if p := cfg.Policy("billing"); strings.Join(p.Tools.Deny, ",") != "delete_*" {
+		t.Errorf("policy of a server with a url: %+v", p)
+	}
+}
+
+func TestBuiltinLimits(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Limits.MaxMessageSize != DefaultMaxMessageSize || cfg.Gateway.Listen != DefaultListen || cfg.Gateway.MaxRequestSize != DefaultMaxRequestSize || cfg.Audit.File != "" {
+		t.Errorf("%+v %+v %+v", cfg.Limits, cfg.Gateway, cfg.Audit)
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	for in, want := range map[string]int64{"512": 512, "512B": 512, "64KiB": 64 << 10, "4 MiB": 4 << 20, "1GiB": 1 << 30} {
+		if got, err := ParseSize(in); err != nil || got != want {
+			t.Errorf("%q = %d, %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"", "0", "-1", "1.5MiB", "4MB", "MiB", "9999999GiB"} {
+		if _, err := ParseSize(bad); err == nil {
+			t.Errorf("%q accepted", bad)
 		}
 	}
 }
