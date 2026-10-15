@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Check Vigie's spans against Sonde: allow-list coverage and SQL queries.
 
-Replays the spans of the demo (written by `go run ./examples/demo -traces FILE`)
-into an embedded ClickHouse (chDB) created from Sonde's own schema, the way
-Sonde's collector writes them, then runs every SQL block of docs/sonde.md.
+Replays the spans of the demo (written by `go run ./examples/demo -traces FILE`,
+over stdio, and with -gateway over HTTP) into an embedded ClickHouse (chDB)
+created from Sonde's own schema, the way Sonde's collector writes them, then
+runs every SQL block of docs/sonde.md.
 
 Usage:
-    python3 scripts/sonde_check.py --sonde ../sonde --traces /tmp/traces.jsonl
+    python3 scripts/sonde_check.py --sonde ../sonde --traces stdio.jsonl --traces http.jsonl
 
 Requirements: pip install chdb pyyaml
 """
@@ -37,6 +38,7 @@ EXPECTED = [
     ("secrets.arguments", "aws_access_key_id", "send_reminder", "arguments.body"),  # secrets
     ("get_invoice",),  # latency
     ("get_invoice",),  # server errors
+    ("pipe", "tcp", "127.0.0.1"),  # traffic per transport and client
     ("2026-07-28",),  # protocol versions
 ]
 
@@ -116,10 +118,10 @@ def emitted_keys(spans: list[dict]) -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sonde", type=Path, required=True, help="path to a Sonde checkout")
-    parser.add_argument("--traces", type=Path, required=True, help="spans written by the demo")
+    parser.add_argument("--traces", type=Path, required=True, action="append", help="spans written by the demo (repeatable)")
     args = parser.parse_args()
 
-    spans = [json.loads(line) for line in args.traces.read_text().splitlines() if line.strip()]
+    spans = [json.loads(line) for path in args.traces for line in path.read_text().splitlines() if line.strip()]
     collector = yaml.safe_load((args.sonde / "otel-collector" / "config.yaml").read_text())
     sonde_keys = set(collector["processors"]["redaction/genai"]["allowed_keys"])
     vigie_keys = set(yaml.safe_load((ROOT / "integrations" / "sonde" / "allowed-keys.yaml").read_text()))

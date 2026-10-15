@@ -3,13 +3,14 @@
 [Sonde](https://github.com/OlivMartins/sonde) reçoit de l’OTLP, le normalise, le filtre et l’écrit dans ClickHouse. Vigie y ajoute ce que l’agent ne voit pas : ce qui part réellement vers les serveurs MCP et ce que la politique en a fait.
 
 ```text
-agent ── OTLP ─────────────────────────────┐
-  │                                         ▼
-  └── stdio ──▶ vigie ── stdio ──▶ serveur  collector Sonde ──▶ ClickHouse ──▶ Grafana
-                  └──── OTLP ───────────────▲
+agent ── OTLP ──────────────────────────────────────┐
+  │                                                  ▼
+  ├── stdio ──▶ vigie run ───── stdio ──▶ serveur    collector Sonde ──▶ ClickHouse ──▶ Grafana
+  └── HTTP ───▶ vigie gateway ─ HTTP ───▶ serveur    ▲
+                  └──── OTLP ────────────────────────┘
 ```
 
-Quand l’agent est instrumenté et transmet son contexte dans `params._meta`, les spans de Vigie s’insèrent dans la même trace que les appels au modèle : une exécution d’agent se lit d’un bloc, de la question à l’appel d’outil refusé.
+Quand l’agent est instrumenté et transmet son contexte (dans `params._meta`, ou dans l’en-tête `traceparent` en HTTP), les spans de Vigie s’insèrent dans la même trace que les appels au modèle : une exécution d’agent se lit d’un bloc, de la question à l’appel d’outil refusé.
 
 ## Brancher
 
@@ -33,7 +34,12 @@ Quand l’agent est instrumenté et transmet son contexte dans `params._meta`, l
    vigie run --server billing -- npx -y billing-mcp
    ```
 
-   Dans la configuration d’un client MCP, ces variables vont dans le bloc `env` du serveur.
+   Dans la configuration d’un client MCP, ces variables vont dans le bloc `env` du serveur. Pour la passerelle, elles vont dans l’environnement du service :
+
+   ```bash
+   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_METRICS_EXPORTER=none \
+     vigie gateway --config vigie.yaml
+   ```
 
 4. Ouvrez un shell ClickHouse (`make sql` dans Sonde) et essayez les requêtes ci-dessous.
 
@@ -41,6 +47,7 @@ Quand l’agent est instrumenté et transmet son contexte dans `params._meta`, l
 
 - **Appels d’outils comptés deux fois.** Comme le demandent les conventions, les spans de Vigie portent `gen_ai.operation.name = execute_tool`. La vue `genai_tool_calls` de Sonde 0.3 les compte donc comme des appels d’outils, sans agent, en plus de ceux que l’agent trace lui-même. En attendant que Sonde les traite à part, ajoutez `AND SpanAttributes['vigie.upstream.name'] = ''` à la clause `WHERE` de `genai_tool_calls_mv` (`clickhouse/initdb/02-genai-model.sql`), et lisez les appels MCP avec les requêtes de cette page.
 - **Masquage.** Le collector de Sonde masque les e-mails et les jetons dans les valeurs qu’il garde, y compris dans les événements. Les raisons des décisions de Vigie ne contiennent jamais de secret ; si vous activez `capture_content`, Vigie masque déjà les secrets qu’il reconnaît avant l’envoi, et Sonde ajoute sa propre couche.
+- **Passerelle.** Ses spans portent `network.transport = tcp` et `network.protocol.name = http` (`pipe` pour stdio), l’adresse du client (`client.address`) et, avec des jetons, son nom (`vigie.client.name`). L’identifiant de session des révisions 2025 n’est jamais exporté tel quel : `mcp.session.id` en est une empreinte, assez pour regrouper les échanges d’une session sans permettre de la reprendre.
 - **Échantillonnage.** Avec le profil d’échantillonnage en queue de Sonde, gardez les traces où `vigie.decision` vaut `block` ou `audit` : ce sont celles qu’on voudra relire.
 
 ## Requêtes
@@ -164,6 +171,25 @@ WHERE ServiceName = 'vigie' AND SpanKind = 'Client'
   AND Timestamp >= now() - INTERVAL 1 DAY
 GROUP BY server, tool
 ORDER BY error_rate DESC, calls DESC;
+```
+
+### Trafic par transport et par client
+
+Qui passe par la passerelle, qui reste en stdio, et ce que la politique refuse à chacun. Le client est le nom de son jeton, à défaut son adresse.
+
+```sql
+SELECT
+    SpanAttributes['network.transport'] AS transport,
+    if(SpanAttributes['vigie.client.name'] != '', SpanAttributes['vigie.client.name'],
+       SpanAttributes['client.address']) AS client,
+    SpanAttributes['vigie.upstream.name'] AS server,
+    count() AS requests,
+    countIf(SpanAttributes['vigie.decision'] = 'block') AS blocked
+FROM otel.otel_traces
+WHERE ServiceName = 'vigie' AND SpanKind = 'Server'
+  AND Timestamp >= now() - INTERVAL 1 DAY
+GROUP BY transport, client, server
+ORDER BY requests DESC;
 ```
 
 ### Révisions du protocole MCP en usage
