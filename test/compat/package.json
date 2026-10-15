@@ -1,0 +1,15 @@
+{
+  "name": "vigie-compat",
+  "private": true,
+  "description": "Vigie between the official MCP TypeScript SDKs (v1 and v2), in both protocol eras, and against a malicious server",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 compat.test.mjs adversarial.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "sdk-v1": "npm:@modelcontextprotocol/sdk@1.32.1",
+    "zod": "4.3.6"
+  }
+}
