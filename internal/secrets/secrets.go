@@ -312,7 +312,14 @@ func isIdentifier(s string) bool {
 	if s == "" {
 		return false
 	}
-	return strings.IndexFunc(s, func(r rune) bool {
-		return !(r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
-	}) < 0
+	for _, r := range s {
+		if !isIdentifierRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isIdentifierRune(r rune) bool {
+	return r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
