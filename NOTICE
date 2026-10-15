@@ -1,0 +1,13 @@
+Vigie
+Copyright 2026 OlivMartins
+
+Ce produit est distribué sous licence Apache 2.0 (voir le fichier LICENSE).
+
+Les binaires incluent des bibliothèques tierces, chacune sous sa propre licence :
+OpenTelemetry Go (Apache 2.0), gRPC Go (Apache 2.0), Protocol Buffers Go (BSD 3-Clause),
+goccy/go-yaml (MIT), google/uuid (BSD 3-Clause), cenkalti/backoff (MIT),
+go-logr (Apache 2.0), grpc-gateway (BSD 3-Clause), golang.org/x/net, sys et text (BSD 3-Clause).
+La liste exacte et les versions figurent dans go.mod.
+
+Les tests de compatibilité (test/compat) téléchargent les SDK MCP officiels en TypeScript
+(licence MIT), qui ne sont pas redistribués.

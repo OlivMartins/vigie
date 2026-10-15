@@ -1,0 +1,10 @@
+/bin/
+/dist/
+cover.out
+cover.html
+node_modules/
+.DS_Store
+.idea/
+.vscode/
+*.test
+__pycache__/
