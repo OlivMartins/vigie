@@ -75,6 +75,17 @@ Onze formats de clés et jetons détectés : bloqués quand ils partent vers un 
 </tr>
 </table>
 
+## Comment ça marche
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.png">
+    <img src="docs/assets/architecture-light.png" width="100%" alt="Architecture de Vigie : l’agent envoie ses requêtes à Vigie en stdio. Vigie les lit strictement, applique la politique, puis les relaie au serveur MCP ou les refuse avec une raison renvoyée au modèle. Au retour, il retire de la liste les outils modifiés ou non approuvés et signale les secrets. Vigie lit sa configuration vigie.yaml, lit et écrit le fichier d’empreintes que le développeur approuve avec vigie pins, et exporte ses traces et métriques en OTLP vers un collector OpenTelemetry et un backend d’observabilité">
+  </picture>
+</p>
+
+Vigie se lance à la place du serveur, dans la configuration du client. Chaque requête est lue, jugée par la politique, puis relayée au serveur ou refusée avec une raison que le modèle comprend. Au retour, les outils modifiés ou non approuvés sont retirés de la liste avant d’atteindre l’agent. Les empreintes tiennent dans un fichier par serveur, que vous approuvez avec `vigie pins`, et les traces partent en OTLP vers votre backend.
+
 ## Démarrer
 
 **La démo**, sans rien installer d’autre que Go : un serveur de facturation, utilisé puis mis à jour avec une description piégée.
