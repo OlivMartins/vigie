@@ -12,3 +12,4 @@ Chaque décision structurante est consignée ici, avec son contexte et ce qu’e
 | [0006](0006-aucun-secret-dans-la-telemetrie.md) | Aucune valeur sensible dans la télémétrie | Acceptée |
 | [0007](0007-passerelle-http-sans-etat.md) | Une passerelle HTTP sans état, une conversation par échange | Acceptée |
 | [0008](0008-pas-d-ecoute-anonyme-hors-boucle-locale.md) | Pas d’écoute anonyme au-delà de la boucle locale | Acceptée |
+| [0009](0009-heuristiques-deterministes-sur-les-definitions.md) | Des heuristiques déterministes sur les définitions d’outils, et une approbation qui vaut acceptation | Acceptée |

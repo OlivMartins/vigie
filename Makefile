@@ -35,10 +35,11 @@ cover: ## Mesure la couverture des tests (cover.html)
 	go tool cover -html=cover.out -o cover.html
 	@go tool cover -func=cover.out | tail -1
 
-fuzz: ## Fuzz l'analyseur JSON-RPC, le lecteur SSE et le détecteur de secrets, 30 s chacun
+fuzz: ## Fuzz l'analyseur JSON-RPC, le lecteur SSE, le détecteur de secrets et les détections, 30 s chacun
 	go test -run='^$$' -fuzz=FuzzParseFrame -fuzztime=30s ./internal/jsonrpc
 	go test -run='^$$' -fuzz=FuzzReader -fuzztime=30s ./internal/sse
 	go test -run='^$$' -fuzz=FuzzScanJSON -fuzztime=30s ./internal/secrets
+	go test -run='^$$' -fuzz=FuzzScan$$ -fuzztime=30s ./internal/detect
 
 bench: ## Mesure le temps de traitement d'un appel d'outil et d'un tools/list
 	go test -run='^$$' -bench=. -benchmem ./internal/proxy ./internal/gateway

@@ -33,6 +33,9 @@ func TestBuiltinDefaults(t *testing.T) {
 	if p.Secrets.Arguments != ActionBlock || p.Secrets.Results != ActionWarn {
 		t.Errorf("secrets = %+v", p.Secrets)
 	}
+	if p.Detections.Action != ActionBlock || len(p.Detections.Exempt) != 0 {
+		t.Errorf("detections = %+v", p.Detections)
+	}
 	if cfg.Telemetry.CaptureContent || !cfg.Telemetry.PropagateContext {
 		t.Errorf("telemetry = %+v", cfg.Telemetry)
 	}
@@ -105,6 +108,37 @@ servers:
 	}
 }
 
+func TestDetectionsSection(t *testing.T) {
+	cfg, err := Load(write(t, `
+version: 1
+defaults:
+  detections:
+    action: warn
+    exempt:
+      "*": [sensitive_path]
+servers:
+  docs:
+    detections:
+      exempt:
+        "read_*": ["*"]
+  sandbox:
+    detections:
+      action: "off"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.Policy("other"); p.Detections.Action != ActionWarn || strings.Join(p.Detections.Exempt["*"], ",") != "sensitive_path" {
+		t.Errorf("defaults = %+v", p.Detections)
+	}
+	if p := cfg.Policy("docs"); p.Detections.Action != ActionWarn || len(p.Detections.Exempt) != 1 || p.Detections.Exempt["read_*"][0] != "*" {
+		t.Errorf("a server's exemptions replace the defaults: %+v", p.Detections)
+	}
+	if p := cfg.Policy("sandbox"); p.Detections.Action != ActionOff || len(p.Detections.Exempt) != 1 {
+		t.Errorf("sandbox = %+v", p.Detections)
+	}
+}
+
 func TestInvalidFiles(t *testing.T) {
 	tests := []struct {
 		name, content, want string
@@ -117,6 +151,10 @@ func TestInvalidFiles(t *testing.T) {
 		{"bad on_change", "version: 1\nservers:\n  b:\n    pins:\n      on_change: ignore\n", "servers.b.pins.on_change"},
 		{"block results", "version: 1\ndefaults:\n  secrets:\n    results: block\n", "block is not supported yet"},
 		{"empty pattern", "version: 1\ndefaults:\n  tools:\n    deny: [\"\"]\n", "defaults.tools.deny[0]: empty pattern"},
+		{"bad detections action", "version: 1\ndefaults:\n  detections:\n    action: ignore\n", "defaults.detections.action"},
+		{"unknown detection rule", "version: 1\ndefaults:\n  detections:\n    exempt:\n      x: [typo]\n", `defaults.detections.exempt["x"]: "typo" is not one of *, hidden_instructions`},
+		{"empty detection rule", "version: 1\ndefaults:\n  detections:\n    exempt:\n      x: [\"\"]\n", "empty rule"},
+		{"empty exempt pattern", "version: 1\ndefaults:\n  detections:\n    exempt:\n      \"\": [\"*\"]\n", "empty tool pattern"},
 		{"bad server name", "version: 1\nservers:\n  ../evil: {}\n", "invalid server name"},
 		{"duplicate key", "version: 1\ndefaults:\n  mode: audit\n  mode: enforce\n", "duplicate"},
 		{"several errors", "version: 1\ndefaults:\n  mode: x\n  secrets:\n    arguments: y\n", "secrets.arguments"},

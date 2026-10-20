@@ -31,6 +31,7 @@ client MCP ─────────────────────▶ �
 | `internal/mcp` | Ce que Vigie sait du protocole : méthodes, cible d’une requête, version, forme de `tools/list` et des résultats |
 | `internal/policy` | Décide : `allow`, `warn`, `audit` ou `block`, avec les constats (*findings*) qui justifient la décision |
 | `internal/pins` | Empreintes des définitions d’outils, fichier par serveur, diff de revue |
+| `internal/detect` | Heuristiques déterministes sur les définitions d’outils : ce qu’une description honnête ne contient pas |
 | `internal/secrets` | Détection de clés et jetons dans des valeurs JSON, masquage |
 | `internal/telemetry` | OpenTelemetry : export, propagation par `params._meta` et par en-têtes HTTP, noms d’attributs, instruments |
 | `internal/proxy` | La conversation, indépendante du transport (politique, spans, appariement des réponses), le relais stdio et la vie du processus serveur |
@@ -49,12 +50,12 @@ Prenons `tools/call get_invoice`, envoyée par le client.
 
 1. **Lecture.** Une ligne de l’entrée standard est un message (ou un lot). Le message est décodé en membres bruts : `id`, `method`, `params` sont lus avec des clés exactes ; tout le reste est gardé tel quel. Un message ambigu (membre en double, `"Name"` à côté de `"name"`) est refusé avec une erreur `-32600`, tout comme un `tools/call` sans `id` ou sans nom d’outil lisible.
 2. **Span SERVER.** Vigie extrait le contexte de trace de `params._meta` (`traceparent`, `tracestate`, `baggage`) et ouvre un span `tools/call get_invoice` de type SERVER, enfant de l’appel côté agent s’il existe.
-3. **Politique.** Dans l’ordre : nom de l’outil (listes `deny` puis `allow`), statut de l’empreinte, secrets dans les arguments. Chaque règle qui correspond ajoute un constat ; la décision est la plus sévère.
+3. **Politique.** Dans l’ordre : nom de l’outil (listes `deny` puis `allow`), statut de l’empreinte, détections sur la définition que le modèle a pu voir, secrets dans les arguments. Chaque règle qui correspond ajoute un constat ; la décision est la plus sévère.
 4. **Refus.** Si la décision est `block`, Vigie répond lui-même : un résultat d’outil avec `isError: true` et une phrase qui dit pourquoi (voir [ADR 0005](adr/0005-refus-en-resultat-d-outil.md)). La requête n’atteint jamais le serveur, le span SERVER se ferme avec `error.type = tool_error` et `vigie.decision = block`.
 5. **Relais.** Sinon, Vigie ouvre un span CLIENT, enfant du précédent, écrit son contexte dans `params._meta` et transmet. Le serveur, s’il est instrumenté, rattache ses propres spans à celui-ci.
 6. **Réponse.** Quand la réponse revient, avec exactement le même `id` (`5` n’est pas `"5"` ni `5.0`), Vigie ferme le span CLIENT, examine le résultat (secrets renvoyés au modèle), ferme le span SERVER et transmet. Une réponse qui ne correspond à aucune requête en attente n’est pas relayée : un client tolérant pourrait la prendre pour la réponse à un `tools/list` et recevoir une liste que Vigie n’a pas filtrée.
 
-Pour `tools/list`, l’étape 6 fait davantage : chaque définition passe par le fichier d’empreintes, et les outils interdits, non approuvés ou sans nom lisible sont retirés de la liste avant qu’elle n’atteigne le modèle. Une liste que Vigie ne sait pas lire, ou ambiguë (`"Tools"` à côté de `"tools"`), est remplacée par une erreur. Si la liste porte un `ttlMs` (2026-07-28), il passe à 0 : une liste filtrée ne doit pas rester en cache chez le client.
+Pour `tools/list`, l’étape 6 fait davantage : chaque définition passe par les détections et le fichier d’empreintes, et les outils interdits, non approuvés, détectés ou sans nom lisible sont retirés de la liste avant qu’elle n’atteigne le modèle. Une liste que Vigie ne sait pas lire, ou ambiguë (`"Tools"` à côté de `"tools"`), est remplacée par une erreur. Si la liste porte un `ttlMs` (2026-07-28), il passe à 0 : une liste filtrée ne doit pas rester en cache chez le client.
 
 Les requêtes émises par le serveur (anciennes révisions : `sampling/createMessage`, `elicitation/create`, `roots/list`) suivent le même chemin en sens inverse, sans politique. Les notifications passent sans span, sauf `notifications/cancelled`, qui ferme les spans de la requête annulée.
 
@@ -130,7 +131,7 @@ Les noms suivent les [conventions MCP d’OpenTelemetry](https://github.com/open
 | `vigie.client.name` | client authentifié par `gateway.tokens` | passerelle, span SERVER |
 | `http.response.status_code` | statut HTTP d’erreur du serveur | passerelle, span CLIENT |
 | `vigie.decision` | `allow`, `warn`, `audit`, `block` | `tools/call`, `tools/list` |
-| `vigie.rule` | règle décisive : `tools.invalid`, `tools.deny`, `tools.allow`, `pins.changed`, `pins.pending`, `pins.unavailable`, `secrets.arguments`, `secrets.results` | idem |
+| `vigie.rule` | règle décisive : `tools.invalid`, `tools.deny`, `tools.allow`, `pins.changed`, `pins.pending`, `pins.unavailable`, `detections.<règle>`, `secrets.arguments`, `secrets.results` | idem |
 | `vigie.mode` | `enforce` ou `audit` | idem |
 | `vigie.pin.status` | `approved`, `changed`, `pending`, `unknown` | `tools/call` |
 | `vigie.tools.listed`, `.hidden`, `.new`, `.changed`, `.pending` | compteurs | `tools/list` |
@@ -220,6 +221,26 @@ Par défaut (`on_new: first-session`), les outils vus pendant la première sessi
 
 Un fichier illisible empêche Vigie de démarrer ; s’il le devient en cours de route, les outils concernés sont bloqués (`pins.unavailable`) : faute de pouvoir vérifier, Vigie refuse.
 
+## Détections
+
+Un modèle lit la définition entière d’un outil : description, schéma, noms de paramètres, valeurs d’énumération. Une personne qui relit un diff lit moins. L’empoisonnement d’outil (*tool poisoning*) vit dans cet écart, et il n’attend pas qu’un outil change : un serveur peut être piégé dès sa première version. Les détections lisent donc chaque chaîne de la définition, noms de membres compris, sauf `_meta` que le modèle ne lit pas ([ADR 0009](adr/0009-heuristiques-deterministes-sur-les-definitions.md)).
+
+| Règle | Cherche | Exemple |
+| --- | --- | --- |
+| `hidden_instructions` | balises qui s’adressent au modèle plutôt que de décrire l’outil, commentaires HTML, marqueurs de gabarit, « ignore les instructions précédentes » | `<IMPORTANT>`, `[INST]`, `<!--` |
+| `invisible_text` | caractères de contrôle, contrôles bidirectionnels, espaces de largeur nulle, caractères d’étiquette Unicode (qui encodent de l’ASCII sans se voir) ; les jonctions de largeur nulle et les sélecteurs d’emoji restent permis | `U+202E`, `U+200B`, `U+E0041` |
+| `sensitive_path` | références à des fichiers d’identifiants ou de configuration d’agents | `~/.ssh`, `id_rsa`, `.env`, `.aws/credentials`, `mcp.json` |
+| `tool_shadowing` | une description qui fixe des conditions et des obligations pour *un autre outil du même serveur*, ou qui annonce passer outre les autres | « Quand tu appelles `send_email`, tu dois aussi… » |
+| `concealment` | consignes de cacher quelque chose à l’utilisateur | « do not tell the user », « secretly » |
+
+Citer un autre outil ne suffit pas (« utilise `list_files` d’abord » est une description normale) : c’est la condition jointe à l’obligation, dans la même phrase, qui est retenue. Un constat dit la règle et l’emplacement (`inputSchema.properties.note.description`), jamais le texte : la raison d’un refus est lue par le modèle, elle ne doit pas rejouer l’injection.
+
+**Effet.** `detections.action` vaut `block` par défaut. La détection s’applique à chaque `tools/list` et à chaque `tools/call` (sur la définition que le modèle a pu voir, en cas de client qui garde la liste en cache). Un outil détecté est masqué et ses appels refusés ; un *nouvel* outil détecté n’est pas approuvé d’emblée, même pendant la première session, il attend `vigie pins approve`. Une approbation par `vigie pins approve` vaut acceptation de cette définition précise : si le serveur la modifie, la détection reprend. En mode `audit` rien n’est retenu, les constats sont enregistrés. `detections.exempt` dispense un outil d’une règle ou de toutes, avec ou sans empreintes.
+
+**Mesure.** Le corpus de [`internal/detect/testdata`](../internal/detect/testdata) tient les deux côtés du critère de sortie : `attacks.json` reproduit des techniques publiques documentées (empoisonnement et *shadowing* d’Invariant Labs, empoisonnement du schéma entier de CyberArk, caractères d’étiquette Unicode, contrôles bidirectionnels...), chacune détectée avec les règles attendues ; `benign.json` réunit les `tools/list` non modifiés de neuf serveurs de référence (86 outils : *everything*, *filesystem*, *memory*, *sequential-thinking*, *github*, *slack*, *fetch*, *git*, *time*), sans aucun faux positif. Les deux tests tournent en CI ; un faux positif rapporté par un utilisateur s’ajoute au corpus avant d’être corrigé.
+
+**Coût.** Analyser une définition prend environ 45 µs. Le résultat est mémorisé par définition et par ensemble d’outils (l’un change le verdict de `tool_shadowing`) : un `tools/call` coûte environ 2 µs de plus.
+
 ## Secrets
 
 Onze règles reconnaissent des formats structurés : clés privées PEM, clés d’accès AWS, jetons GitHub et GitLab, jetons Slack, clés secrètes Stripe, clés d’API Anthropic, OpenAI et Google, JSON Web Tokens, identifiants dans une URL (`postgres://user:pass@host`).
@@ -281,6 +302,7 @@ Le temps d’un appel d’outil se compte en dizaines de millisecondes au moins 
 ## Limites connues
 
 - **Confiance à la première session.** Par défaut, les outils de la première session sont approuvés tels quels : un serveur malveillant dès sa première version passe. Pour un serveur tiers, préférez `on_new: block` et relisez chaque outil.
+- **Détections : heuristiques, pas preuves.** Elles repèrent des techniques connues, pas toute formulation : une instruction paraphrasée sans balise ni consigne de dissimulation passe. Les motifs de texte sont en anglais, la langue des descriptions d’outils ; `invisible_text` et `sensitive_path` ne dépendent pas de la langue. Le *tool shadowing* ne voit que les outils du même serveur, pas ceux d’un autre. Ce que le serveur change dans le comportement d’un outil sans toucher à sa définition (le cas de `postmark-mcp`) n’est pas dans leur champ. Elles réduisent l’écart entre ce que le modèle lit et ce qu’on relit, elles ne remplacent ni la revue ni `on_new: block` pour un serveur tiers.
 - **Vérification passive.** Les empreintes sont vérifiées sur les `tools/list` que le client demande. Un client qui appelle un outil sans relister (cache, requêtes en rafale) est jugé sur l’état connu du fichier d’empreintes. En mode enforce, le modèle ne voit jamais une définition d’outil non approuvée : elle passe forcément par un `tools/list` filtré. La vérification active, où Vigie relit lui-même la liste, est reportée en 0.3.
 - **Seuls les outils sont épinglés.** Les `instructions` qu’un serveur renvoie à `initialize` ou `server/discover`, que certains clients placent dans le prompt système, et les descriptions de prompts et de ressources peuvent changer sans être soumises à approbation. Leur épinglage est prévu en 0.3.
 - **L’empreinte couvre la description, pas le comportement.** Un serveur qui change ce que fait un outil sans changer sa définition n’est pas détecté. Les traces, elles, montrent ce qui a été appelé et ce qui est revenu.

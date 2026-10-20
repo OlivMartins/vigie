@@ -6,8 +6,12 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"hash/maphash"
+	"slices"
+	"sync"
 
 	"github.com/OlivMartins/vigie/internal/config"
+	"github.com/OlivMartins/vigie/internal/detect"
 	"github.com/OlivMartins/vigie/internal/mcp"
 	"github.com/OlivMartins/vigie/internal/pins"
 	"github.com/OlivMartins/vigie/internal/secrets"
@@ -35,6 +39,9 @@ const (
 	RulePinUnavailable = "pins.unavailable"
 	RuleSecretArgument = "secrets.arguments"
 	RuleSecretResult   = "secrets.results"
+	// RuleDetections prefixes the rules of the heuristics on tool
+	// definitions: detections.hidden_instructions, detections.invisible_text...
+	RuleDetections = "detections."
 )
 
 // Finding is one rule that matched. Reason is a single sentence meant for
@@ -77,7 +84,19 @@ type Engine struct {
 	policy  config.Policy
 	pins    *pins.Store
 	scanner *secrets.Scanner
+
+	// scans memoizes the heuristics: a tools/call must not pay for them again.
+	seed  maphash.Seed
+	mu    sync.Mutex
+	scans map[scanKey][]detect.Finding
 }
+
+type scanKey struct {
+	definition, tools uint64
+}
+
+// maxScans bounds the memo; it starts over when full.
+const maxScans = 1024
 
 // NewEngine builds the engine of a server. store may be nil when pinning is
 // disabled.
@@ -85,7 +104,7 @@ func NewEngine(server string, p config.Policy, store *pins.Store, scanner *secre
 	if !p.Pins.Enabled {
 		store = nil
 	}
-	return &Engine{server: server, policy: p, pins: store, scanner: scanner}
+	return &Engine{server: server, policy: p, pins: store, scanner: scanner, seed: maphash.MakeSeed(), scans: map[scanKey][]detect.Finding{}}
 }
 
 // Policy returns the rules in force.
@@ -129,7 +148,13 @@ func (e *Engine) CheckCall(tool string, arguments json.RawMessage) Verdict {
 		findings = append(findings, *f)
 	}
 	if e.pins != nil {
-		status, err := e.pins.Status(tool)
+		file, err := e.pins.Load()
+		var entry *pins.Entry
+		status := pins.StatusUnknown
+		if err == nil {
+			entry = file.Tools[tool]
+			status = entry.Status()
+		}
 		pinStatus = status
 		switch {
 		case err != nil:
@@ -143,6 +168,16 @@ func (e *Engine) CheckCall(tool string, arguments json.RawMessage) Verdict {
 				Rule: RulePinPending, Action: config.ActionBlock, Tool: tool,
 				Reason: fmt.Sprintf("tool %q was never listed by server %q, so it was never approved", tool, e.server),
 			})
+		}
+		// A client may call a tool from a list it kept: check the definition
+		// the model can have seen, not only the lists that go through Vigie.
+		// A person who approved it has accepted what it says.
+		if snap := latest(entry); snap != nil && snap.ApprovedBy != pins.ApprovedByCommand {
+			set := toolSet{has: func(n string) bool { return file.Tools[n] != nil }}
+			for n := range file.Tools {
+				set.sum += maphash.String(e.seed, n)
+			}
+			findings = append(findings, e.detections(tool, snap.Definition, set)...)
 		}
 	}
 	if e.policy.Secrets.Arguments != config.ActionOff {
@@ -178,6 +213,12 @@ func (e *Engine) CheckList(tools []mcp.Tool) ListOutcome {
 	perTool := make(map[int][]Finding)
 	var toPin []pins.Observed
 	var toPinIndex []int
+	listed := make(map[string]bool, len(tools))
+	set := toolSet{has: func(n string) bool { return listed[n] }}
+	for _, t := range tools {
+		listed[t.Name] = true
+		set.sum += maphash.String(e.seed, t.Name)
+	}
 	for i, t := range tools {
 		if t.Name == "" || e.scanner.Contains(t.Name) {
 			// Without a readable name a definition cannot be pinned: clients
@@ -195,6 +236,15 @@ func (e *Engine) CheckList(tools []mcp.Tool) ListOutcome {
 		toPin = append(toPin, pins.Observed{Name: t.Name, Definition: t.Definition})
 		toPinIndex = append(toPinIndex, i)
 	}
+	// A new tool that trips a detection is not approved on sight: it waits
+	// for a person, who reviews it with vigie pins diff.
+	detected := make([][]Finding, len(toPin))
+	for k, i := range toPinIndex {
+		detected[k] = e.detections(tools[i].Name, tools[i].Definition, set)
+		toPin[k].Hold = e.policy.Mode == config.ModeEnforce && slices.ContainsFunc(detected[k], func(f Finding) bool {
+			return f.Action == config.ActionBlock
+		})
+	}
 	if e.pins != nil && len(toPin) > 0 {
 		obs, err := e.pins.Observe(toPin, e.policy.Pins.OnNew)
 		for k, i := range toPinIndex {
@@ -204,6 +254,9 @@ func (e *Engine) CheckList(tools []mcp.Tool) ListOutcome {
 				continue
 			}
 			o := obs[k]
+			if o.Reviewed {
+				detected[k] = nil
+			}
 			if o.New {
 				out.New++
 			}
@@ -216,6 +269,9 @@ func (e *Engine) CheckList(tools []mcp.Tool) ListOutcome {
 				perTool[i] = append(perTool[i], e.pinPending(name))
 			}
 		}
+	}
+	for k, i := range toPinIndex {
+		perTool[i] = append(perTool[i], detected[k]...)
 	}
 	var all []Finding
 	for i, t := range tools {
@@ -246,6 +302,76 @@ func (e *Engine) CheckResult(tool string, result json.RawMessage) Verdict {
 		})
 	}
 	return e.verdict(findings)
+}
+
+// toolSet describes the tools of a server: membership, and a digest that
+// tells two sets apart (the sum of the hashes of their names).
+type toolSet struct {
+	has func(name string) bool
+	sum uint64
+}
+
+// latest returns the definition a client can see: the one waiting for
+// approval if there is one, else the approved one.
+func latest(e *pins.Entry) *pins.Snapshot {
+	switch {
+	case e == nil:
+		return nil
+	case e.Pending != nil:
+		return e.Pending
+	default:
+		return e.Approved
+	}
+}
+
+// detections runs the heuristics on a tool definition.
+func (e *Engine) detections(tool string, definition json.RawMessage, tools toolSet) []Finding {
+	action := e.policy.Detections.Action
+	if action == config.ActionOff {
+		return nil
+	}
+	found := e.scan(tool, definition, tools)
+	var out []Finding
+	for _, d := range found {
+		if e.exempt(tool, d.Rule) {
+			continue
+		}
+		out = append(out, Finding{
+			Rule: RuleDetections + d.Rule, Action: action, Tool: tool, Location: d.Location,
+			Reason: fmt.Sprintf("the definition of tool %q holds %s (review: vigie pins diff %s %s, or exempt it in detections.exempt)", tool, d.Reason, e.server, tool),
+		})
+	}
+	return out
+}
+
+// scan memoizes detect.Scan by definition and by the set of tools around it,
+// which tool shadowing depends on. The memo is keyed by a seeded hash: a
+// server cannot craft a definition that collides with a clean one.
+func (e *Engine) scan(tool string, definition json.RawMessage, tools toolSet) []detect.Finding {
+	key := scanKey{maphash.Bytes(e.seed, definition), tools.sum}
+	e.mu.Lock()
+	found, ok := e.scans[key]
+	e.mu.Unlock()
+	if ok {
+		return found
+	}
+	found = detect.Scan(definition, func(n string) bool { return n != tool && tools.has(n) })
+	e.mu.Lock()
+	if len(e.scans) >= maxScans {
+		clear(e.scans)
+	}
+	e.scans[key] = found
+	e.mu.Unlock()
+	return found
+}
+
+func (e *Engine) exempt(tool, rule string) bool {
+	for pattern, rules := range e.policy.Detections.Exempt {
+		if Match(pattern, tool) && (slices.Contains(rules, "*") || slices.Contains(rules, rule)) {
+			return true
+		}
+	}
+	return false
 }
 
 func jsonString(s string) json.RawMessage {

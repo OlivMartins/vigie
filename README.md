@@ -214,6 +214,8 @@ vigie pins approve billing get_invoice --fingerprint sha256:0332449c77f2
 
 L’empreinte lie l’approbation à ce que vous avez relu : si le serveur envoie entre-temps une autre définition, l’approbation échoue.
 
+Dès sa première apparition, une définition qui cache des instructions (bloc `<IMPORTANT>`, caractères invisibles, lecture de `~/.ssh`, consigne de dissimulation, règles imposées à un autre outil) est masquée et attend la même revue, même pendant la première session. Les règles sont déterministes, sans modèle ; `detections.exempt` dispense un outil de l’une d’elles. Voir [l’architecture](docs/ARCHITECTURE.md#détections).
+
 Le fichier d’empreintes de chaque serveur est un JSON lisible : versionnez-le avec votre projet et relisez ses changements en revue de code, comme un fichier de verrouillage de dépendances.
 
 Pour garder une trace des décisions sans backend d’observabilité, `audit.file` les écrit dans un journal local, une ligne JSON par décision, avec la règle, l’emplacement, le client et l’identifiant de trace, jamais la valeur détectée.
