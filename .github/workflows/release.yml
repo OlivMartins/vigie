@@ -47,7 +47,9 @@ jobs:
       id-token: write # signature sans clé : l'identité du workflow signe
     env:
       TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
-      IMAGE: ghcr.io/${{ github.repository_owner }}/vigie
+      # En minuscules : une référence d'image n'admet pas de majuscules, et
+      # cosign la reçoit telle quelle.
+      IMAGE: ghcr.io/olivmartins/vigie
     steps:
       - uses: actions/checkout@v5
         with:
@@ -78,7 +80,7 @@ jobs:
             COMMIT=${{ github.sha }}
           provenance: mode=max
           sbom: true
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2
       - name: Signer l'image (cosign, sans clé)
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

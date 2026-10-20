@@ -2,7 +2,7 @@
 
 Toutes les évolutions notables de Vigie sont consignées ici. Le format s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et les versions suivent le [versionnage sémantique](https://semver.org/lang/fr/).
 
-## [0.2.0] - 2026-10-15
+## [0.2.0] - 2026-10-20
 
 La passerelle HTTP : Vigie devant des serveurs MCP distants, partagé par une équipe, avec la même politique, les mêmes empreintes et les mêmes traces qu’en stdio.
 
