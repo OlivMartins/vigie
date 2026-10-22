@@ -57,7 +57,7 @@ func checkCommand(args []string, s Streams) int {
 	fmt.Fprintf(s.Out, "Limits:         messages up to %s, stop timeout %s\n\n", size(cfg.Limits.MaxMessageSize), stop)
 
 	tw := tabwriter.NewWriter(s.Out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "SERVER\tMODE\tTOOLS\tPINS\tSECRETS")
+	fmt.Fprintln(tw, "SERVER\tMODE\tTOOLS\tPINS\tSECRETS\tDETECTIONS")
 	row := func(name string, p config.Policy) {
 		tools := "allow " + strings.Join(p.Tools.Allow, ",")
 		if len(p.Tools.Deny) > 0 {
@@ -68,7 +68,11 @@ func checkCommand(args []string, s Streams) int {
 			pinsCol = fmt.Sprintf("new: %s, changed: %s", p.Pins.OnNew, p.Pins.OnChange)
 		}
 		secretsCol := fmt.Sprintf("arguments: %s, results: %s", p.Secrets.Arguments, p.Secrets.Results)
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", name, p.Mode, tools, pinsCol, secretsCol)
+		detectionsCol := string(p.Detections.Action)
+		if n := len(p.Detections.Exempt); n > 0 {
+			detectionsCol += fmt.Sprintf(" (%d exempt)", n)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", name, p.Mode, tools, pinsCol, secretsCol, detectionsCol)
 	}
 	row("(any other)", cfg.Policy(""))
 	for _, name := range cfg.Servers() {

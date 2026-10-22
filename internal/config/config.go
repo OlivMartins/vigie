@@ -11,12 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/OlivMartins/vigie/internal/detect"
 	"github.com/OlivMartins/vigie/internal/pins"
 )
 
@@ -61,6 +64,8 @@ type Policy struct {
 	Tools   ToolRules
 	Pins    PinRules
 	Secrets SecretRules
+	// Detections configures the heuristics run on tool definitions.
+	Detections DetectionRules
 }
 
 // ToolRules lists the tools a server may expose, by name pattern.
@@ -80,6 +85,16 @@ type PinRules struct {
 type SecretRules struct {
 	Arguments Action
 	Results   Action
+}
+
+// DetectionRules configures the heuristics that look for hidden instructions
+// in tool definitions.
+type DetectionRules struct {
+	// Action is block, warn or off.
+	Action Action
+	// Exempt maps tool name patterns to the rules (or "*" for all of them)
+	// the matching tools are exempt from.
+	Exempt map[string][]string
 }
 
 // Telemetry configures what goes into spans and how context flows.
@@ -215,6 +230,8 @@ func builtinPolicy() Policy {
 		Tools:   ToolRules{Allow: []string{"*"}},
 		Pins:    PinRules{Enabled: true, OnNew: pins.PinFirstSession, OnChange: ActionBlock},
 		Secrets: SecretRules{Arguments: ActionBlock, Results: ActionWarn},
+
+		Detections: DetectionRules{Action: ActionBlock},
 	}
 }
 
@@ -265,10 +282,12 @@ type serverSpec struct {
 	Secrets *secretsSpec      `yaml:"secrets"`
 	URL     string            `yaml:"url"`
 	Headers map[string]string `yaml:"headers"`
+
+	Detections *detectionsSpec `yaml:"detections"`
 }
 
 func (s serverSpec) policy() policySpec {
-	return policySpec{Mode: s.Mode, Tools: s.Tools, Pins: s.Pins, Secrets: s.Secrets}
+	return policySpec{Mode: s.Mode, Tools: s.Tools, Pins: s.Pins, Secrets: s.Secrets, Detections: s.Detections}
 }
 
 type telemetrySpec struct {
@@ -281,6 +300,8 @@ type policySpec struct {
 	Tools   *toolsSpec   `yaml:"tools"`
 	Pins    *pinsSpec    `yaml:"pins"`
 	Secrets *secretsSpec `yaml:"secrets"`
+
+	Detections *detectionsSpec `yaml:"detections"`
 }
 
 type toolsSpec struct {
@@ -297,6 +318,11 @@ type pinsSpec struct {
 type secretsSpec struct {
 	Arguments string `yaml:"arguments"`
 	Results   string `yaml:"results"`
+}
+
+type detectionsSpec struct {
+	Action string              `yaml:"action"`
+	Exempt map[string][]string `yaml:"exempt"`
 }
 
 func (s policySpec) applyTo(p *Policy) {
@@ -328,6 +354,14 @@ func (s policySpec) applyTo(p *Policy) {
 		}
 		if s.Secrets.Results != "" {
 			p.Secrets.Results = Action(s.Secrets.Results)
+		}
+	}
+	if d := s.Detections; d != nil {
+		if d.Action != "" {
+			p.Detections.Action = Action(d.Action)
+		}
+		if d.Exempt != nil {
+			p.Detections.Exempt = d.Exempt
 		}
 	}
 }
@@ -371,6 +405,21 @@ func (s policySpec) validate(path string) error {
 			errs = append(errs, fmt.Errorf("%s.secrets.results: block is not supported yet: results can be flagged (warn) or ignored (off)", path))
 		} else {
 			check("secrets.results", s.Secrets.Results, string(ActionWarn), string(ActionOff))
+		}
+	}
+	if d := s.Detections; d != nil {
+		check("detections.action", d.Action, string(ActionBlock), string(ActionWarn), string(ActionOff))
+		for _, pattern := range slices.Sorted(maps.Keys(d.Exempt)) {
+			if strings.TrimSpace(pattern) == "" {
+				errs = append(errs, fmt.Errorf("%s.detections.exempt: empty tool pattern", path))
+			}
+			for _, rule := range d.Exempt[pattern] {
+				if rule == "" {
+					errs = append(errs, fmt.Errorf("%s.detections.exempt[%q]: empty rule", path, pattern))
+					continue
+				}
+				check(fmt.Sprintf("detections.exempt[%q]", pattern), rule, append([]string{"*"}, detect.Rules...)...)
+			}
 		}
 	}
 	return errors.Join(errs...)

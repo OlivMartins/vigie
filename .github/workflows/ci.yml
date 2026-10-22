@@ -53,6 +53,7 @@ jobs:
       - run: go test -run='^$' -fuzz=FuzzParseFrame -fuzztime=20s ./internal/jsonrpc
       - run: go test -run='^$' -fuzz=FuzzReader -fuzztime=20s ./internal/sse
       - run: go test -run='^$' -fuzz=FuzzScanJSON -fuzztime=20s ./internal/secrets
+      - run: go test -run='^$' -fuzz='FuzzScan$' -fuzztime=20s ./internal/detect
 
   build:
     name: Compilation des six plateformes

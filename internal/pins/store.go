@@ -112,6 +112,9 @@ func (f *File) Names() []string {
 type Observed struct {
 	Name       string
 	Definition json.RawMessage
+	// Hold keeps a tool seen for the first time waiting for approval, whatever
+	// the policy on new tools.
+	Hold bool
 }
 
 // Observation is the outcome of comparing a definition with the pin file.
@@ -120,6 +123,9 @@ type Observation struct {
 	Status      Status
 	New         bool // first time this tool is seen
 	Fingerprint string
+	// Reviewed tells that a person approved this very definition with
+	// vigie pins approve, as opposed to the automatic approval of new tools.
+	Reviewed bool
 }
 
 var serverName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -321,7 +327,7 @@ func (s *Store) Observe(tools []Observed, newTools NewTools) ([]Observation, err
 			obs.New = true
 			e = &Entry{}
 			snap := snapshot()
-			if approveNew {
+			if approveNew && !t.Hold {
 				snap.ApprovedAt, snap.ApprovedBy = &now, ApprovedOnFirstUse
 				e.Approved = snap
 			} else {
@@ -341,6 +347,7 @@ func (s *Store) Observe(tools []Observed, newTools NewTools) ([]Observation, err
 			}
 		}
 		obs.Status = e.Status()
+		obs.Reviewed = e.Approved != nil && e.Approved.Fingerprint == fp && e.Approved.ApprovedBy == ApprovedByCommand
 		out = append(out, obs)
 	}
 	if dirty {

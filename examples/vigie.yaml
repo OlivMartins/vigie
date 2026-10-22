@@ -87,6 +87,19 @@ defaults:
     # Credentials in tool results, on their way to the model: warn or off.
     results: warn
 
+  # Heuristics on tool definitions: instructions hidden from the reviewer but
+  # read by the model (<IMPORTANT> blocks, invisible characters, references to
+  # credential files, rules about other tools, "do not tell the user"). A new
+  # tool that trips one waits for "vigie pins approve" even in the first
+  # session; approving it accepts what it says.
+  detections:
+    # block, warn or off.
+    action: block
+    # Tools exempt from some rules: tool pattern -> rules, or "*" for all of
+    # them. Rules: hidden_instructions, invisible_text, sensitive_path,
+    # tool_shadowing, concealment.
+    exempt: {}
+
 servers:
   # The name given to "vigie run --server".
   filesystem:
@@ -99,6 +112,12 @@ servers:
       on_new: block
     tools:
       deny: ["delete_*", "merge_pull_request"]
+
+  # A documentation server may legitimately mention .env files.
+  docs:
+    detections:
+      exempt:
+        "read_*": [sensitive_path]
 
   # A server being evaluated: observe before enforcing.
   sandbox:

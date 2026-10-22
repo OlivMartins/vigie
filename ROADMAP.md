@@ -83,17 +83,17 @@ Reportés : la vérification active des empreintes (Vigie relit `tools/list` lui
 
 Repérer une définition piégée dès sa première apparition, sans attendre qu’elle change.
 
-- Vérification active des empreintes : Vigie relit `tools/list` lui-même avant le premier appel, pour les clients qui gardent la liste en cache
-- Passerelle : en-têtes `Mcp-Param-*` vérifiés contre les arguments, d’après les annotations `x-mcp-header` de la définition épinglée
-- Épingler aussi les `instructions` du serveur (`initialize`, `server/discover`) et les descriptions de prompts et de ressources
-- Heuristiques déterministes sur les définitions : balises d’instructions (`<IMPORTANT>`), caractères invisibles et de contrôle bidirectionnel, références à des fichiers sensibles, mentions d’autres outils (*tool shadowing*), consignes de dissimulation
-- Règles de secrets personnalisées dans la configuration, exemptions par outil
-- Masquage des secrets dans les résultats, au lieu du seul signalement
-- Règles sur les annotations (`destructiveHint`, `openWorldHint`) : approbation exigée pour les outils destructeurs
-- Détection de boucles et limites de débit par outil
-- Corpus de tests public d’attaques connues, mesure du taux de faux positifs
+- [ ] Vérification active des empreintes : Vigie relit `tools/list` lui-même avant le premier appel, pour les clients qui gardent la liste en cache
+- [ ] Passerelle : en-têtes `Mcp-Param-*` vérifiés contre les arguments, d’après les annotations `x-mcp-header` de la définition épinglée
+- [ ] Épingler aussi les `instructions` du serveur (`initialize`, `server/discover`) et les descriptions de prompts et de ressources
+- [x] Heuristiques déterministes sur les définitions : balises d’instructions (`<IMPORTANT>`), caractères invisibles et de contrôle bidirectionnel, références à des fichiers sensibles, mentions d’autres outils (*tool shadowing*), consignes de dissimulation ; un nouvel outil détecté attend une approbation, même dans la première session
+- [ ] Règles de secrets personnalisées dans la configuration ; exemptions par outil (faites pour les détections : `detections.exempt`)
+- [ ] Masquage des secrets dans les résultats, au lieu du seul signalement
+- [ ] Règles sur les annotations (`destructiveHint`, `openWorldHint`) : approbation exigée pour les outils destructeurs
+- [ ] Détection de boucles et limites de débit par outil
+- [x] Corpus de tests public d’attaques connues, mesure du taux de faux positifs
 
-**Critères de sortie** : corpus d’attaques détecté à 100 % ; moins de 1 % de faux positifs sur les définitions des serveurs MCP de référence.
+**Critères de sortie** : corpus d’attaques détecté à 100 % ; moins de 1 % de faux positifs sur les définitions des serveurs MCP de référence. Tenus pour les heuristiques sur les définitions (22 attaques détectées, 0 faux positif sur 86 définitions de 9 serveurs de référence) ; à refaire à chaque règle ajoutée.
 
 ## 0.4 · Identité
 

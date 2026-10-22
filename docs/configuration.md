@@ -46,8 +46,19 @@ Les tailles s’écrivent `512KiB`, `4MiB`, `1GiB` ou en octets ; les durées `5
 | `pins.on_change` | `block`, `warn` | `block` | Définition modifiée : masquée et refusée, ou seulement signalée |
 | `secrets.arguments` | `block`, `warn`, `off` | `block` | Clé ou jeton dans les arguments d’un appel |
 | `secrets.results` | `warn`, `off` | `warn` | Clé ou jeton dans un résultat renvoyé au modèle |
+| `detections.action` | `block`, `warn`, `off` | `block` | Instructions cachées dans une définition d’outil (voir ci-dessous) |
+| `detections.exempt` | motif d’outil → règles | `{}` | Outils dispensés de certaines règles de détection, ou de toutes (`"*"`) |
 
 Les motifs comparent le nom exact d’un outil : `*` vaut n’importe quelle suite de caractères, `?` un caractère. `delete_*` couvre `delete_invoice` mais pas `undelete`.
+
+**Détections.** Vigie lit chaque définition d’outil comme le modèle la lit, schéma et noms de paramètres compris, et cherche ce qu’une description honnête n’a aucune raison de contenir. Les règles, détaillées dans l’[architecture](ARCHITECTURE.md#détections) : `hidden_instructions`, `invisible_text`, `sensitive_path`, `tool_shadowing`, `concealment`. En mode `enforce`, un outil détecté est masqué et ses appels refusés ; un nouvel outil détecté attend une approbation même pendant la première session. `vigie pins diff` montre la définition, `vigie pins approve --fingerprint …` l’accepte : une approbation humaine vaut acceptation de cette définition, pas de la suivante. Pour dispenser un outil sans passer par les empreintes, ou quand `pins.enabled` est `false`, `detections.exempt` associe un motif d’outil aux règles à ignorer :
+
+```yaml
+detections:
+  exempt:
+    "read_*": [sensitive_path]   # un serveur de documentation qui parle de fichiers .env
+    legacy_tool: ["*"]
+```
 
 Une liste donnée dans une section de serveur remplace celle de `defaults` ; `deny: []` efface donc les interdictions par défaut pour ce serveur. Un serveur sans section suit `defaults`.
 

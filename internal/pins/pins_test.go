@@ -55,6 +55,34 @@ func tool(name, description string) Observed {
 	return Observed{Name: name, Definition: json.RawMessage(`{"name":"` + name + `","description":"` + description + `","inputSchema":{"type":"object"}}`)}
 }
 
+func TestHoldAndReviewed(t *testing.T) {
+	s, _ := newStore(t)
+	if err := s.BeginSession(); err != nil {
+		t.Fatal(err)
+	}
+	held := tool("held", "v1")
+	held.Hold = true
+	obs, err := s.Observe([]Observed{held, tool("free", "v1")}, PinFirstSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs[0].Status != StatusPending || obs[0].Reviewed || obs[1].Status != StatusApproved || obs[1].Reviewed {
+		t.Fatalf("first sight: a held tool waits even in the first session, automatic approval is not a review: %+v", obs)
+	}
+	if _, err := s.Approve("held"); err != nil {
+		t.Fatal(err)
+	}
+	obs, _ = s.Observe([]Observed{held, tool("free", "v1")}, PinFirstSession)
+	if obs[0].Status != StatusApproved || !obs[0].Reviewed {
+		t.Errorf("approved by a person: %+v", obs[0])
+	}
+	// The server changes the definition: no longer the one a person reviewed.
+	obs, _ = s.Observe([]Observed{tool("held", "v2")}, PinFirstSession)
+	if obs[0].Status != StatusChanged || obs[0].Reviewed {
+		t.Errorf("changed definition: %+v", obs[0])
+	}
+}
+
 func TestTrustOnFirstUse(t *testing.T) {
 	s, now := newStore(t)
 	obs, err := s.Observe([]Observed{tool("get_invoice", "v1")}, PinOnFirstUse)

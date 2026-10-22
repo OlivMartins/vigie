@@ -2,6 +2,21 @@
 
 Toutes les évolutions notables de Vigie sont consignées ici. Le format s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et les versions suivent le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+Début de la 0.3, « Détections » : repérer une définition d’outil piégée dès sa première apparition, sans attendre qu’elle change.
+
+### Ajouté
+
+- Détections sur les définitions d’outils (`internal/detect`, [ADR 0009](docs/adr/0009-heuristiques-deterministes-sur-les-definitions.md)) : `hidden_instructions`, `invisible_text`, `sensitive_path`, `tool_shadowing`, `concealment`, appliquées à chaque chaîne de la définition (schémas et noms de paramètres compris) à chaque `tools/list` et `tools/call`. Règles `detections.<règle>` dans les spans, le journal d’audit et les refus.
+- Section `detections` de la configuration : `action` (`block`, `warn`, `off`) et `exempt` (outil → règles). `vigie check` l’affiche.
+- Corpus de tests : 22 attaques documentées (`internal/detect/testdata/attacks.json`) et les `tools/list` de 9 serveurs MCP de référence (`benign.json`, 86 outils, aucun faux positif).
+
+### Modifié
+
+- Un nouvel outil dont la définition est détectée n’est plus approuvé d’emblée pendant la première session : il attend `vigie pins approve`, qui vaut acceptation de cette définition. Un outil déjà approuvé automatiquement et détecté est masqué ; `detections.exempt` l’accepte, ou `vigie pins forget` puis une approbation.
+- `pins.Observed` gagne `Hold`, `pins.Observation` gagne `Reviewed`.
+
 ## [0.2.0] - 2026-10-20
 
 La passerelle HTTP : Vigie devant des serveurs MCP distants, partagé par une équipe, avec la même politique, les mêmes empreintes et les mêmes traces qu’en stdio.
