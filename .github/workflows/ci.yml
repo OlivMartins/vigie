@@ -18,7 +18,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         go: ["1.26.x", stable]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
@@ -34,7 +34,7 @@ jobs:
     name: Analyse statique
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -46,7 +46,7 @@ jobs:
     name: Fuzzing court
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -59,7 +59,7 @@ jobs:
     name: Compilation des six plateformes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -70,7 +70,7 @@ jobs:
     name: Image conteneur
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: Construire l'image
         uses: docker/build-push-action@v7
@@ -90,7 +90,7 @@ jobs:
     name: Démo et SDK MCP officiels
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -108,7 +108,7 @@ jobs:
     name: Suite de conformance MCP à travers la passerelle
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -122,8 +122,8 @@ jobs:
     name: Intégration Sonde dans ClickHouse
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           repository: OlivMartins/sonde
           path: sonde
